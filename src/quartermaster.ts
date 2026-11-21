@@ -128,6 +128,11 @@ export default function quartermaster(pi: ExtensionAPI): void {
 									Type.Object({
 										require: Type.Optional(Type.Array(Type.String(), { description: "Input modalities a candidate must support." })),
 										minCostScore: Type.Optional(Type.Number({ minimum: 0, maximum: 1, description: "Minimum cost score (1 = cheapest)." })),
+										minScores: Type.Optional(
+											Type.Record(Type.String(), Type.Number({ minimum: 0, maximum: 1 }), {
+												description: "Minimum deterministic score per dimension — candidates below the bar are excluded before the draw.",
+											}),
+										),
 										allowUnrated: Type.Optional(Type.Boolean({ description: "Let unrated models into the pool." })),
 									}),
 								),

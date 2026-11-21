@@ -4,6 +4,12 @@
  * delegation, and a persuadable orchestrator is a privilege-escalation
  * path — so which tool categories it may approve alone, and which it
  * must always escalate to the user, are user-authored policy, not vibes.
+ *
+ * The file also carries the optional sections that tune behavior rather
+ * than permission — currently `matching` (the always-on cost penalty).
+ * Absent means the documented defaults, and every malformed value warns
+ * and falls back to its default alone: a typo must never quietly change
+ * or disable policy.
  */
 
 import * as fs from "node:fs";
@@ -17,13 +23,39 @@ export interface AuthorityConfig {
 	autoApprove: string[];
 	/** Tool name patterns that always require the user's confirmation. */
 	escalate: string[];
+	/** Draw-time knobs that apply to every spec; see `matchingOf`. */
+	matching: MatchingPolicy;
 }
+
+/**
+ * The `matching` section: how draws weigh cost against quality.
+ *
+ * The cost penalty is global rather than per-spec on purpose — a spec that
+ * forgets cost must not be cost-blind, and a spec cannot opt out. Teams that
+ * genuinely want pure quality draws set `costLambda` to 0.
+ */
+export interface MatchingPolicy {
+	/**
+	 * Strength of the always-on cost penalty: suitability loses
+	 * `costLambda * (1 - costScore)` before the softmax. 0 disables it; 0.15 is
+	 * the default.
+	 */
+	costLambda: number;
+}
+
+export const DEFAULT_MATCHING: MatchingPolicy = {
+	// A penalty, not a gate: it shifts every candidate down on the cost axis
+	// by at most lambda, so equal-cost models keep their exact relative odds
+	// and the cheap side of a close call wins a little more often.
+	costLambda: 0.15,
+};
 
 const DEFAULT_AUTHORITY: AuthorityConfig = {
 	// Read-only work never needs a human.
 	autoApprove: ["read", "grep", "find", "ls", "bash:git *", "bash:composer test*", "bash:npm test*"],
 	// Destructive and exfiltrating surfaces always do.
 	escalate: ["bash:rm *", "bash:git push*", "write", "edit"],
+	matching: DEFAULT_MATCHING,
 };
 
 export function loadAuthority(warnings: DiscoveryWarning[]): AuthorityConfig {
@@ -58,7 +90,37 @@ export function loadAuthority(warnings: DiscoveryWarning[]): AuthorityConfig {
 		});
 		return DEFAULT_AUTHORITY;
 	}
-	return { autoApprove, escalate };
+	return { autoApprove, escalate, matching: matchingOf(obj.matching, filePath, warnings) };
+}
+
+/**
+ * Read the optional `matching` section. Absent means the documented defaults;
+ * a malformed value warns and falls back to the default for that knob alone,
+ * so one typo never silently changes or disables the rest of the policy.
+ */
+function matchingOf(
+	value: unknown,
+	filePath: string,
+	warnings: DiscoveryWarning[],
+): MatchingPolicy {
+	if (value === undefined) return DEFAULT_MATCHING;
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		warnings.push({ file: filePath, message: "matching must be an object — using default matching policy" });
+		return DEFAULT_MATCHING;
+	}
+	const obj = value as Record<string, unknown>;
+	let costLambda = DEFAULT_MATCHING.costLambda;
+	if (obj.costLambda !== undefined) {
+		if (typeof obj.costLambda !== "number" || !Number.isFinite(obj.costLambda) || obj.costLambda < 0 || obj.costLambda > 1) {
+			warnings.push({
+				file: filePath,
+				message: `matching.costLambda must be a number in [0, 1] — using ${DEFAULT_MATCHING.costLambda}`,
+			});
+		} else {
+			costLambda = obj.costLambda;
+		}
+	}
+	return { costLambda };
 }
 
 function patternsOf(value: unknown): string[] | null {

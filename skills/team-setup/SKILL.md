@@ -40,7 +40,7 @@ The user's answers, not defaults, decide the team.
    spec:
      weights: { reviewing-code: 1.0 }
      temperature: 0.7
-     filters: { require: [text], minCostScore: 0.3 }
+     filters: { require: [text], minCostScore: 0.3, minScores: { reviewing-code: 0.75 } }
    ---
    You are a code reviewer. Load the repo's code-review skill and follow it.
    ```
@@ -50,13 +50,25 @@ The user's answers, not defaults, decide the team.
    a spec (inline in frontmatter — weights, temperature, filters) or a
    direct `model` pin. There is no specs file: reusable specs live in
    agent definitions, and the quartermaster builds overrides on the fly
-   at convene. Weights are 0-1. The description is what the quartermaster
-   routes on — write it as a when-to-use statement.
+   at convene. Weights are 0-1. `filters.minScores: {dimension: 0-1}` is
+   a **requirement**: candidates below the bar are excluded before the
+   draw (it reads overrides, then models.yaml, then the evidence mean),
+   so write frontier stances as a score floor rather than as a quality
+   tilt. Every draw also subtracts an always-on cost penalty from each
+   candidate's suitability, so the cheap side of a close call wins a
+   little more often — mention `matching.costLambda` (0 disables it) only
+   if the user wants pure quality draws. The description is what the
+   quartermaster routes on — write it as a when-to-use statement.
 4. **Write the model priors** to `team/models.yaml`. Cost is a 0-1 score
    (1 = cheapest), per-account: ask about promotions and plans, not list
    prices. Scores are priors — set them from what the user knows, mention
    `scripts/refresh-scores.cjs` for cost suggestions, and note that
-   ratings gathered by the quartermaster refine them over time.
+   ratings gathered by the quartermaster refine them over time. This file
+   is also the **spend whitelist**: a model is rated for non-scout specs
+   only when it has `scores` here (or a score override), so every model
+   the user is willing to pay for needs at least a rough score. A
+   `cost`-only entry is price knowledge with no quality judgement and
+   stays unrated; evidence never admits a model the user did not list.
 5. **Write the mailbox templates** to `team/mailboxes/<name>.md` —
    `name` and `description` in frontmatter, the preamble as the body.
    Templates carry **no endpoints**: the convene call's channel wiring
@@ -65,7 +77,8 @@ The user's answers, not defaults, decide the team.
    text stays truthful under any wiring. Adversarial review pairs
    should say so explicitly.
 6. **Optionally write `team/authority.jsonc`** — which tool categories
-   the quartermaster may approve alone versus which always escalate.
+   the quartermaster may approve alone versus which always escalate, plus
+   the optional `matching` section (`costLambda`, default 0.15).
    The defaults are conservative; only loosen them on the user's
    explicit instruction.
 7. **Validate.** Re-run the smoke check. Every warning is a real defect

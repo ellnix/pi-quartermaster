@@ -11,6 +11,11 @@ export interface SpecFilters {
 	require?: string[];
 	/** Minimum cost score of a candidate (cost: 0-1, 1 = cheapest). */
 	minCostScore?: number;
+	/**
+	 * Minimum deterministic score per dimension, 0-1. A requirement, not a
+	 * tilt: candidates below a named bar are excluded before the draw.
+	 */
+	minScores?: Record<string, number>;
 	/** Let unrated models (no scores anywhere) into the pool. Default false. */
 	allowUnrated?: boolean;
 }
@@ -97,6 +102,8 @@ export function validateSpec(
 				filters.allowUnrated = f.allowUnrated;
 			}
 		}
+		const minScores = readMinScores(f.minScores, context, warnings);
+		if (minScores) filters.minScores = minScores;
 	}
 
 	return {
@@ -104,4 +111,43 @@ export function validateSpec(
 		temperature,
 		filters: Object.keys(filters).length > 0 ? filters : undefined,
 	};
+}
+
+/**
+ * Read the score floor: dimension -> minimum, each in [0, 1].
+ *
+ * A malformed entry warns and is dropped; a floor with no valid dimensions is
+ * no floor at all. `cost` is refused here with a pointer to minCostScore: the
+ * gate reads quality dimensions, and silently gating on a name the matcher
+ * does not score that way would exclude every candidate.
+ */
+function readMinScores(
+	value: unknown,
+	context: string,
+	warnings: Array<{ file: string; message: string }>,
+): Record<string, number> | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		warnings.push({ file: context, message: "spec.filters.minScores must be an object of dimension -> minimum — filter ignored" });
+		return undefined;
+	}
+	const minScores: Record<string, number> = {};
+	for (const [dimension, floor] of Object.entries(value as Record<string, unknown>)) {
+		if (dimension === "cost") {
+			warnings.push({
+				file: context,
+				message: "spec.filters.minScores.cost is not a score dimension — use filters.minCostScore (1 = cheapest) — ignored",
+			});
+			continue;
+		}
+		if (typeof floor !== "number" || !Number.isFinite(floor) || floor < 0 || floor > 1) {
+			warnings.push({
+				file: context,
+				message: `spec.filters.minScores.${dimension} must be a number in [0, 1] — dimension ignored`,
+			});
+			continue;
+		}
+		minScores[dimension] = floor;
+	}
+	return Object.keys(minScores).length > 0 ? minScores : undefined;
 }

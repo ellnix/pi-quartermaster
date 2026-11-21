@@ -139,17 +139,33 @@ frontmatter above), and an override at convene is built on the fly:
 {
   "weights": { "reviewing-code": 1.0 },
   "temperature": 0.7,
-  "filters": { "minCostScore": 0.3, "require": ["text"] }
+  "filters": {
+    "require": ["text"],
+    "minCostScore": 0.3,
+    "minScores": { "reviewing-code": 0.75 }
+  }
 }
 ```
 
-- Suitability of model *i* = dot product of spec weights and the
-  model's score vector.
+- Suitability of model *i* = (dot product of spec weights and the
+  model's score vector) − λ·(1 − cost) — the cost weight's term plus the
+  always-on cost penalty below.
 - Selection = softmax over suitability at the spec's temperature —
   bounded chaos. τ near zero for paths where diversity is not worth the
   error rate (security review); τ high for insight-hunting roles.
 - Hard filters (capability, cost floor — cost is 0-1 with 1 = cheapest,
-  so a floor is a minimum — and auth) are crossed by nothing.
+  so a floor is a minimum — score floor, and auth) are crossed by
+  nothing.
+- **`minScores` is a requirement, not a tilt.** `{ "reviewing-code": 0.75 }`
+  excludes every candidate below 0.75 on that dimension before the draw,
+  reading the deterministic stack: overrides beat `models.yaml`, and where
+  neither speaks the evidence posterior mean applies — never the Thompson
+  sample, because requirements are stable and chaos lives in the draw. A
+  candidate with no score anywhere on a gated dimension fails the gate
+  (absence is not a rating; the run reports how many were excluded that
+  way), and an emptied pool errors naming the gate and its threshold.
+  Frontier stances are written this way rather than as quality tilts
+  plus a cost weight.
 - A spec weighting a dimension no candidate declares is reported when
   the draw runs.
 
@@ -204,7 +220,27 @@ anthropic/claude-opus-4-8:
 ```
 
 - **Filter → draw:** candidates = authenticated ∩ capability ∩ cost
-  ceiling; P(model) = softmax(suitability / τ); draw once at convening.
+  ceiling ∩ score floor; P(model) = softmax(suitability / τ); draw once
+  at convening.
+- **`models.yaml` is the spend whitelist.** A model is rated — eligible
+  for a pool whose spec does not set `allowUnrated` — only when the user
+  gave it score signal: an entry with `scores`, or a score override. A
+  `cost`-only entry is price knowledge without a quality judgement and
+  stays unrated. **Evidence refines, it never admits:** posteriors move a
+  listed model's dimensions, but a model nobody listed cannot enter a
+  rated pool on accumulated evidence alone. `allowUnrated` is the one
+  explicit way to gamble on unknowns, and it is unchanged.
+- **Cost always penalizes the draw.** Every suitability loses
+  `λ·(1 − costScore)` before the softmax, with λ defaulting to 0.15 and
+  applied independently of any spec cost weight: a model's total cost
+  influence is the weight's cost term plus this fixed penalty, so a spec
+  that never mentions cost cannot be cost-blind. The subtraction is
+  additive on purpose — it cancels exactly in the odds between models of
+  equal cost (their relative odds hold at any λ) and it still bites at
+  temperature 0, where a multiplicative factor would only compress gaps.
+  There is no per-spec opt-out; teams that want pure quality draws set
+  `matching.costLambda` (0 restores the pre-0.2.0 distribution) in
+  `authority.jsonc`.
 - **Ratings are outcome-shaped.** `team rate` takes a 0–1 outcome per
   (model, dimension) and updates a posterior. One bad day moves a model
   a little; a pattern moves it a lot; temperature keeps drawing down-
@@ -216,7 +252,9 @@ anthropic/claude-opus-4-8:
   `models.yaml` is never machine-rewritten. Overrides beat any amount of
   posterior drift — the user is the veto layer.
 - **Unknown models degrade, not fail:** no scores → tier "unrated" —
-  selectable by cheap specs, never by frontier specs.
+  selectable by cheap specs, never by frontier specs. Evidence on an
+  unlisted model is inert until the user lists the model, informed by the
+  record when the quartermaster reports a well-rated unknown.
 - Prior data is thin for non-code dimensions (design, research). That
   is acceptable because the sampling architecture tolerates wrong
   priors — exploration corrects them. The refresh script suggests
@@ -264,7 +302,9 @@ name is delegated authority, and a persuadable orchestrator is a
 privilege-escalation path. User config carries a **quartermaster
 authority** section: categories it may approve alone (reads, tests,
 builds) versus categories it must always escalate (destructive shell,
-network, credentials, writes outside the worktree).
+network, credentials, writes outside the worktree). The same file's
+optional `matching` section tunes the draw (`costLambda`); absent
+sections mean the documented defaults.
 
 ---
 

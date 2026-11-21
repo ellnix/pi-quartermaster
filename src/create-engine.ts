@@ -6,10 +6,10 @@
  */
 
 import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
-import type { Ack, QuartermasterEngine, RateInput, SetCostInput, SetOverrideInput, TeamStatus } from "./engine.ts";
+import type { Ack, MessageInput, QuartermasterEngine, RateInput, SetCostInput, SetOverrideInput, TeamStatus } from "./engine.ts";
 import { composeEngine } from "./compose-engine.ts";
 import { loadConfig, type QuartermasterConfig } from "./config/index.ts";
-import { evidenceMean, loadEvidence, recordOutcome, type EvidenceStore } from "./matching/evidence.ts";
+import { loadEvidence, type EvidenceStore } from "./matching/evidence.ts";
 import { loadOverrides, setCostOverride, setScoreOverride, type OverridesFile } from "./matching/overrides.ts";
 
 export interface EngineState {
@@ -45,12 +45,19 @@ export function createEngine(ctx: ExtensionToolContext): QuartermasterEngine {
 		},
 
 		rate: async (input: RateInput): Promise<Ack> => {
-			const outcome = clamp01(input.outcome);
-			recordOutcome(state.evidence, input.model, input.dimension, outcome, input.note);
-			const mean = evidenceMean(state.evidence, input.model, input.dimension);
+			// Rating resolves by member: the member's spec says what its model was
+			// drawn for. Resolution needs the fleet, which arrives with the
+			// lifecycle PR; until then there is nothing to rate.
 			return {
-				ok: true,
-				message: `recorded ${input.model} / ${input.dimension} = ${outcome}${input.note ? ` (${input.note})` : ""}; posterior mean now ${mean?.toFixed(3)}`,
+				ok: false,
+				message: `rating by member (${input.member}) arrives with the fleet - convene a team first`,
+			};
+		},
+
+		message: async (input: MessageInput): Promise<Ack> => {
+			return {
+				ok: false,
+				message: `messaging arrives with the fleet - no member named ${input.member} until a team convenes`,
 			};
 		},
 

@@ -270,7 +270,7 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			body: Type.String({ description: "The message body." }),
 			steer: Type.Optional(Type.Boolean({ description: "True: interrupt the member's current run and steer it. False (default): queue as a follow-up." })),
 		}),
-		execute: async (_id, params: MessageInput) => ackText(await engine.message(params)),
+		execute: async (_id, params: MessageInput, _sig, _up, ctx) => ackText(await getEngine(ctx).message(params)),
 	});
 
 	pi.registerTool({

@@ -14,6 +14,7 @@ export function composeEngine(parts: Partial<QuartermasterEngine>): Quartermaste
 		status: parts.status ?? (() => fallback.status()),
 		readChannel: parts.readChannel ?? ((input) => fallback.readChannel(input)),
 		rate: parts.rate ?? ((input) => fallback.rate(input)),
+		message: parts.message ?? ((input) => fallback.message(input)),
 		setCost: parts.setCost ?? ((input) => fallback.setCost(input)),
 		setOverride: parts.setOverride ?? ((input) => fallback.setOverride(input)),
 		pendingAsks: parts.pendingAsks ?? (() => fallback.pendingAsks()),

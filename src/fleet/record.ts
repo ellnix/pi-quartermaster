@@ -83,3 +83,72 @@ export function appendChannel(recordPath: string, mailbox: string, entry: Omit<C
 export function readChannelLog(recordPath: string, mailbox: string, tail?: number): ChannelEntry[] {
 	return readJsonl<ChannelEntry>(channelFile(recordPath, mailbox), tail);
 }
+
+export interface AskEntry {
+	id: string;
+	ts: number;
+	member: string;
+	tool: string;
+	args: string;
+	why: string;
+}
+
+export interface ResolutionEntry {
+	ts: number;
+	id: string;
+	approve: boolean;
+	by: "quartermaster";
+	userConfirmed?: string;
+}
+
+export interface AskRecordEntry extends Partial<ResolutionEntry> {
+	type: "ask" | "resolution";
+}
+
+export function appendAsk(recordPath: string, entry: AskEntry): void {
+	appendJsonl(`${recordPath}/asks.jsonl`, { type: "ask", ...entry } as unknown as Record<string, unknown>);
+}
+
+export function appendResolution(recordPath: string, entry: ResolutionEntry): void {
+	appendJsonl(`${recordPath}/asks.jsonl`, { type: "resolution", ...entry } as unknown as Record<string, unknown>);
+}
+
+export function readAskLog(recordPath: string): Array<{ ask?: AskEntry; resolution?: ResolutionEntry }> {
+	const raw = readJsonl<AskRecordEntry>(`${recordPath}/asks.jsonl`);
+	const out: Array<{ ask?: AskEntry; resolution?: ResolutionEntry }> = [];
+	for (const entry of raw) {
+		if (entry.type === "ask") {
+			const { type: _t, ...ask } = entry;
+			out.push({ ask: ask as AskEntry });
+		} else if (entry.type === "resolution") {
+			const { type: _t, ...resolution } = entry;
+			out.push({ resolution: resolution as ResolutionEntry });
+		}
+	}
+	return out;
+}
+
+/** Pending asks: latest ask per id without a later resolution. */
+export function pendingAsks(recordPath: string): AskEntry[] {
+	const pending = new Map<string, AskEntry>();
+	for (const { ask, resolution } of readAskLog(recordPath)) {
+		if (ask) pending.set(ask.id, ask);
+		else if (resolution) pending.delete(resolution.id);
+	}
+	return [...pending.values()];
+}
+
+export function askResolution(recordPath: string, id: string): ResolutionEntry | null {
+	let found: ResolutionEntry | null = null;
+	for (const { resolution } of readAskLog(recordPath)) {
+		if (resolution?.id === id) found = resolution;
+	}
+	return found;
+}
+
+/** Human-facing classification text for a pending ask. */
+export function classifyForDisplay(classification: "auto" | "escalate"): string | undefined {
+	return classification === "auto"
+		? "auto-approvable: policy lets the quartermaster approve this alone"
+		: "escalate-only: approving requires the user's confirmation quoted in userConfirmed";
+}

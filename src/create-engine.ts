@@ -25,7 +25,8 @@ import { loadConfig, type QuartermasterConfig } from "./config/index.ts";
 import { loadEvidence, recordOutcome, type EvidenceStore } from "./matching/evidence.ts";
 import { loadOverrides, setCostOverride, setScoreOverride, type Overrides } from "./matching/overrides.ts";
 import { Fleet } from "./fleet/fleet.ts";
-import { readChannelLog, readReports } from "./fleet/record.ts";
+import { appendResolution, classifyForDisplay, pendingAsks, readChannelLog, readReports } from "./fleet/record.ts";
+import { classifyAsk } from "./config/authority.ts";
 
 export interface EngineState {
 	ctx: ExtensionToolContext;
@@ -156,12 +157,50 @@ export function createEngine(ctx: ExtensionToolContext): QuartermasterEngine {
 		},
 
 		pendingAsks: async (): Promise<PendingAsk[]> => {
-			// The permissions module is ahead; nothing can ask yet.
-			return [];
+			const recordPath = state.fleet?.record;
+			if (!recordPath) return [];
+			return pendingAsks(recordPath).map((ask) => {
+				const classification = classifyAsk(ask.tool, ask.args, state.config.authority);
+				return {
+					id: ask.id,
+					member: ask.member,
+					tool: ask.tool,
+					args: ask.args,
+					status: "pending",
+					resolution: classifyForDisplay(classification),
+				};
+			});
 		},
 
-		resolveAsk: async (): Promise<Ack> => {
-			return { ok: false, message: "the permissions module is ahead — nothing can ask yet" };
+		resolveAsk: async (input: ResolveAskInput): Promise<Ack> => {
+			const recordPath = state.fleet?.record;
+			if (!recordPath) {
+				return { ok: false, message: "no convened team — asks come from members of a team" };
+			}
+			const ask = pendingAsks(recordPath).find((a) => a.id === input.id);
+			if (!ask) {
+				return { ok: false, message: `no pending ask with id ${input.id} — see pending_asks` };
+			}
+
+			const classification = classifyAsk(ask.tool, ask.args, state.config.authority);
+			if (classification === "escalate" && !input.userConfirmed) {
+				return {
+					ok: false,
+					message: `${ask.tool} ${ask.args} is an escalate-only category: quote the user's confirmation in userConfirmed before approving. Deny freely.`,
+				};
+			}
+
+			appendResolution(recordPath, {
+				ts: Date.now(),
+				id: ask.id,
+				approve: input.approve,
+				by: "quartermaster",
+				userConfirmed: input.userConfirmed,
+			});
+			return {
+				ok: true,
+				message: `ask ${ask.id} ${input.approve ? "approved" : "denied"} (${ask.member}: ${ask.tool} ${ask.args})`,
+			};
 		},
 	});
 }

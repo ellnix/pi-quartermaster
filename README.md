@@ -26,12 +26,14 @@ mailboxes.
 ## Configure (once)
 
 ```
-~/.agents/agents/<name>.md      # team members: description, tools, spec
-~/.agents/mailboxes/<name>.md   # channels: from, to, preamble
-~/.pi/agent/team/specs.jsonc     # pools: weight vectors, temperature, filters
-~/.pi/agent/team/models.yaml     # score priors + cost (yours, never machine-rewritten)
-~/.pi/agent/team/authority.jsonc # which tool categories the quartermaster
-                                 # may approve alone vs. must escalate
+# everything under pi's agent dir, relocated wholesale by
+# PI_CODING_AGENT_DIR:
+team/agents/<name>.md            # members: description, tools, inline spec
+team/mailboxes/<name>.md         # channel templates: preamble (no endpoints —
+                                  # the convene wiring decides who talks to whom)
+team/models.yaml                  # score priors + cost (yours, never machine-rewritten)
+team/authority.jsonc              # which tool categories the quartermaster
+                                  # may approve alone vs. must escalate
 ```
 
 Project overrides live in `.pi/agents/` and `.pi/team/` — optional, and
@@ -47,17 +49,20 @@ surface:
 
 | Tool | Purpose |
 |---|---|
-| `convene_team` | spawn members with drawn models, open mailboxes |
-| `team_list` | members, states, pending asks, unread reports |
-| `read_channel` | mailbox traffic or reports, on demand |
-| `rate_member` | outcome rating → evidence posterior (rate at return-time) |
+| `convene_team` | spawn members with drawn models; declare the channel wiring |
+| `team_list` | members, states, open channels, pending asks, unread reports |
+| `read_channel` | mailbox traffic or reports, on demand — plain JSONL, analyze freely |
+| `message_member` | quartermaster-to-member guidance; `steer` interrupts mid-run |
+| `rate_member` | outcome rating by member → weighted evidence (rate at return-time) |
 | `set_cost` / `set_override` | durable facts with provenance |
 | `pending_asks` / `resolve_ask` | permission asks; escalate-only needs the user's words |
 | `dissolve_team` | collect, dispose, keep the record |
 
 Members get `report`, `send`, and `request_permission` — their only
-channels. All traffic is logged to the team record and readable on
-demand; nothing is pushed into your context.
+channels. Reports carry tracking numbers (`r1, r2, ...`), messages too
+(`m1, m2, ...`), so all three parties steer by reference. All traffic
+is logged to the team record and readable on demand; nothing is pushed
+into your context.
 
 ## Development
 

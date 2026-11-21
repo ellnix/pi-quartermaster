@@ -75,12 +75,18 @@ export function drawForSpec(
 		const rated = hasAnySignal(entry, overrides, evidence, candidate.modelId);
 		const dims = scoreDimensions(candidate.modelId, entry, overrides, evidence);
 		const suitability = dot(spec.weights, dims, costScore);
-		return { candidate, costScore, dims, suitability, rated };
+		// models.yaml `require` is a veto, not a grant: effective input is the
+		// catalog's list intersected with it. It can remove a modality the
+		// catalog claims, never add one the catalog omits.
+		const input = entry?.require
+			? candidate.input.filter((m) => entry.require!.includes(m))
+			: candidate.input;
+		return { candidate, input, costScore, dims, suitability, rated };
 	});
 
 	let eligible = pool;
 	if (spec.filters?.require) {
-		eligible = eligible.filter((p) => spec.filters!.require!.every((m) => p.candidate.input.includes(m)));
+		eligible = eligible.filter((p) => spec.filters!.require!.every((m) => p.input.includes(m)));
 		if (eligible.length === 0) {
 			return { ok: false, error: `no authenticated model satisfies input requirement ${spec.filters!.require!.join("+")}`, notes };
 		}

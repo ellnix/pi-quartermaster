@@ -20,7 +20,11 @@ export interface ModelEntry {
 	scores?: Record<string, number>;
 	/** Cost score, 0-1, 1 = cheapest. Overrides the catalog list cost. */
 	cost?: number;
-	/** Input modality override; the pi catalog is ground truth, this is a veto. */
+	/**
+	 * Input modalities this entry narrows the model to. When set, the
+	 * effective input is the catalog's list intersected with this one: a
+	 * veto can remove modalities, never grant one the catalog omits.
+	 */
 	require?: string[];
 }
 
@@ -77,11 +81,39 @@ function collectFile(filePath: string, models: Map<string, ModelEntry>, warnings
 			entry.cost = Math.max(0, Math.min(1, obj.cost));
 		}
 
-		if (Array.isArray(obj.require)) {
-			const require = obj.require.filter((m): m is string => typeof m === "string");
-			if (require.length > 0) entry.require = require;
-		}
+		const require = readRequire(obj.require, filePath, id, warnings);
+		if (require) entry.require = require;
 
 		models.set(id, entry);
 	}
+}
+
+/**
+ * Read a model entry's `require` list. A malformed value warns and is
+ * ignored rather than coerced, so the catalog input applies and the user
+ * hears about it.
+ */
+function readRequire(
+	raw: unknown,
+	filePath: string,
+	id: string,
+	warnings: DiscoveryWarning[],
+): string[] | undefined {
+	if (raw === undefined) return undefined;
+	if (!Array.isArray(raw) || raw.length === 0) {
+		warnings.push({
+			file: filePath,
+			message: `model "${id}": require must be a non-empty list of input modalities — ignored`,
+		});
+		return undefined;
+	}
+	const modalities: unknown[] = raw;
+	if (!modalities.every((m): m is string => typeof m === "string")) {
+		warnings.push({
+			file: filePath,
+			message: `model "${id}": require entries must all be strings — ignored`,
+		});
+		return undefined;
+	}
+	return modalities;
 }

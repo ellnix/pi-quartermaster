@@ -64,7 +64,7 @@ function collect(
 
 		const parsed = parseFrontmatter(content);
 		if (!parsed.ok) {
-			warnings.push({ file: filePath, message: "no frontmatter at line 1 — skipped" });
+			warnings.push({ file: filePath, message: `${parsed.reason} — skipped` });
 			continue;
 		}
 

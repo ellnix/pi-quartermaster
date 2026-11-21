@@ -40,6 +40,12 @@ fs.writeFileSync(
 		"  cost: 0.9",
 		"fresh/unrated-model:",
 		"  cost: 0.7",
+		"vetoed/multimodal-model:",
+		"  require: [text]",
+		"plain/multimodal-model:",
+		"  cost: 0.5",
+		"expanded/multimodal-model:",
+		"  require: [text, image]",
 	].join("\n"),
 );
 
@@ -90,3 +96,45 @@ const noScoreConfig = loadConfig(process.cwd());
 noScoreConfig.models.clear();
 const result = drawForSpec(candidates.slice(0, 3), noScoreConfig, overrides, new Map(), frontier, "review/frontier");
 console.log(`no-scores case: ${result.ok ? "UNEXPECTED SUCCESS" : result.error}`);
+
+// A models.yaml `require` is a veto over the catalog's claimed input: the
+// effective input is the catalog's list intersected with it. These three
+// cases pin narrow, no-entry passthrough, and grant-denied.
+const imageSpec: SpecDef = {
+	weights: { "reviewing-code": 1.0 },
+	temperature: 0,
+	filters: { require: ["image"], allowUnrated: true },
+};
+const vetoedCandidate: Candidate = {
+	modelId: "vetoed/multimodal-model",
+	name: "Vetoed",
+	provider: "vetoed",
+	input: ["text", "image"],
+	catalogCostPerMtok: 5,
+	hasAuth: true,
+};
+const plainCandidate: Candidate = { ...vetoedCandidate, modelId: "plain/multimodal-model", name: "Plain", provider: "plain" };
+
+const vetoed = drawForSpec([vetoedCandidate], config, overrides, evidence, imageSpec, "require/vetoed");
+const catalogOnly = drawForSpec([plainCandidate], config, overrides, evidence, imageSpec, "require/catalog");
+
+// A veto narrows, it never grants: the entry lists [text, image] over a
+// catalog that claims [text] only, and the image spec still rejects it.
+const expandedCandidate: Candidate = {
+	...vetoedCandidate,
+	modelId: "expanded/multimodal-model",
+	name: "Expanded",
+	provider: "expanded",
+	input: ["text"],
+};
+const expanded = drawForSpec([expandedCandidate], config, overrides, evidence, imageSpec, "require/expanded");
+
+const vetoExcluded = !vetoed.ok && vetoed.error.includes("input requirement image");
+const catalogPassed = catalogOnly.ok && catalogOnly.modelId === "plain/multimodal-model";
+const expansionBlocked = !expanded.ok && expanded.error.includes("input requirement image");
+console.log(`require override, entry require [text] vs spec [image]: ${vetoExcluded ? "excluded (correct)" : "NOT excluded - WRONG"}`);
+console.log(`require override, no entry, catalog [text,image] vs spec [image]: ${catalogPassed ? "passes (correct)" : "blocked - WRONG"}`);
+console.log(`require override, entry require [text,image] vs catalog [text]: ${expansionBlocked ? "excluded (correct, a veto cannot grant)" : "GRANTED - WRONG"}`);
+if (!vetoExcluded || !catalogPassed || !expansionBlocked) {
+	throw new Error("models.yaml require does not narrow the catalog input list");
+}

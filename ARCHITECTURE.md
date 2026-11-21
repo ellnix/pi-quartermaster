@@ -10,8 +10,12 @@ may talk to whom, and under what relationship. It does not command tactics
 The name is the design: a quartermaster equips troops and watches the
 supply lines, but does not tell the reviewer how to review.
 
-**Status:** design-complete, implementation pending. This document is the
-implementation spec.
+**Status:** implemented (v0.1.0) — fleet, mailboxes, permissions,
+matcher, evidence, and the two skills, built in the PR stack from
+issues #1-#8. This document remains the design rationale; the README
+carries day-to-day usage. One known follow-up: a quartermaster-to-member
+delivery channel, so an approved action the member cannot run itself
+can be executed by the quartermaster and relayed back.
 
 ---
 

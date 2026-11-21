@@ -162,10 +162,9 @@ export default function quartermaster(pi: ExtensionAPI): void {
 		label: "Read channel",
 		description:
 			"Read logged team traffic on demand. channel is a mailbox name or \"reports\". " +
-			"All traffic is logged; nothing is pushed into your context. The logs are " +
-			"newline-delimited JSON (JSONL - the same thing ndjson names) under the team " +
-			"record (team_list shows the path): read them with your own tools and run " +
-			"any analysis you like.",
+			"All traffic is logged; nothing is pushed into your context. The logs are plain " +
+			"JSONL files under the team record (team_list shows the path): read them with " +
+			"your own tools and run any analysis you like.",
 		parameters: Type.Object({
 			channel: Type.String({ description: "A mailbox name, or \"reports\"." }),
 			tail: Type.Optional(Type.Number({ description: "How many recent messages to return. Default 20." })),

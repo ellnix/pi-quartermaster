@@ -1,20 +1,20 @@
 /**
  * Whole-config load: discover and validate every layer, collecting
  * warnings instead of throwing. A single malformed file never takes
- * down the rest — the same tolerance the discovery loaders apply.
+ * down the rest. Everything user-level lives under the pi agent
+ * directory (relocated wholesale by PI_CODING_AGENT_DIR); the project
+ * layer under .pi is optional and may stay empty forever.
  */
 
 import { loadAgents, type AgentDef, type DiscoveryWarning } from "./agents.ts";
 import { loadMailboxes, type MailboxDef } from "./mailboxes.ts";
-import { loadSpecs, type SpecDef } from "./specs.ts";
 import { loadModels, type ModelEntry } from "./models.ts";
 import { loadAuthority, type AuthorityConfig } from "./authority.ts";
-import { projectAgentsDir, projectMailboxesDir, teamDir, USER_AGENTS_DIR, USER_MAILBOXES_DIR } from "./paths.ts";
+import { projectAgentsDir, teamDir, userAgentsDir } from "./paths.ts";
 
 export interface QuartermasterConfig {
 	agents: Map<string, AgentDef>;
 	mailboxes: Map<string, MailboxDef>;
-	specs: Map<string, SpecDef>;
 	models: Map<string, ModelEntry>;
 	authority: AuthorityConfig;
 	warnings: DiscoveryWarning[];
@@ -26,17 +26,16 @@ export function loadConfig(cwd: string): QuartermasterConfig {
 	const warnings: DiscoveryWarning[] = [];
 	const agents = loadAgents(cwd, warnings);
 	const mailboxes = loadMailboxes(cwd, warnings);
-	const specs = loadSpecs(cwd, warnings);
 	const models = loadModels(cwd, warnings);
 	const authority = loadAuthority(warnings);
 
-	// Cross-check: an agent referencing an unknown spec is a routing bug
-	// waiting to happen — say it at load, not at convene time.
+	// Cross-check: an agent with neither spec nor model cannot be convened
+	// — say it at load, not at convene time.
 	for (const agent of agents.values()) {
-		if (agent.spec && !specs.has(agent.spec) && !agent.model) {
+		if (!agent.spec && !agent.model) {
 			warnings.push({
 				file: agent.filePath,
-				message: `agent "${agent.name}" references spec "${agent.spec}" which is not defined, and pins no model — convening it will fail`,
+				message: `agent "${agent.name}" has neither spec nor model — convening it will fail`,
 			});
 		}
 	}
@@ -44,20 +43,20 @@ export function loadConfig(cwd: string): QuartermasterConfig {
 	const config: QuartermasterConfig = {
 		agents,
 		mailboxes,
-		specs,
 		models,
 		authority,
 		warnings,
 	};
 
-	if (agents.size === 0 && mailboxes.size === 0 && specs.size === 0 && models.size === 0) {
+	if (agents.size === 0 && mailboxes.size === 0 && models.size === 0) {
 		const project = projectAgentsDir(cwd);
 		config.emptyState = [
 			"No Quartermaster configuration found. Expected any of:",
-			`- agents: ${USER_AGENTS_DIR}/<name>.md${project ? ` or ${project}/<name>.md` : " or .pi/agents/<name>.md"}`,
-			`- mailboxes: ${USER_MAILBOXES_DIR}/<name>.md`,
-			`- specs: ${teamDir()}/specs.jsonc`,
+			`- agents: ${userAgentsDir()}/<name>.md${project ? ` or ${project}/<name>.md` : " or .pi/agents/<name>.md"}`,
+			`- mailboxes: ${teamDir()}/mailboxes/<name>.md`,
 			`- models: ${teamDir()}/models.yaml`,
+			`- authority: ${teamDir()}/authority.jsonc (optional — defaults apply)`,
+			"All of it lives under pi's agent directory, so PI_CODING_AGENT_DIR relocates the team wholesale.",
 			"Run the team-setup skill to interview the user and write these files.",
 		].join("\n");
 	}
@@ -65,4 +64,5 @@ export function loadConfig(cwd: string): QuartermasterConfig {
 	return config;
 }
 
-export type { AgentDef, MailboxDef, SpecDef, ModelEntry, AuthorityConfig, DiscoveryWarning };
+export type { AgentDef, MailboxDef, ModelEntry, AuthorityConfig, DiscoveryWarning };
+export type { SpecDef, SpecFilters } from "./spec.ts";

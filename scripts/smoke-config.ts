@@ -15,15 +15,11 @@ const lines: string[] = [];
 lines.push(`config for ${cwd}`);
 lines.push(`agents (${config.agents.size}):`);
 for (const a of config.agents.values()) {
-	lines.push(`  - ${a.name} [${a.source}] spec=${a.spec ?? "-"} model=${a.model ?? "-"} tools=${a.tools?.join(",") ?? "-"} :: ${a.description.split("\n")[0]}`);
+	lines.push(`  - ${a.name} [${a.source}] spec=${a.spec ? `τ${a.spec.temperature} ${JSON.stringify(a.spec.weights)}` : "-"} model=${a.model ?? "-"} tools=${a.tools?.join(",") ?? "-"} :: ${a.description.split("\n")[0]}`);
 }
 lines.push(`mailboxes (${config.mailboxes.size}):`);
 for (const m of config.mailboxes.values()) {
 	lines.push(`  - ${m.name} [${m.source}] (template - endpoints wired at convene) :: ${m.description.split("\n")[0]}`);
-}
-lines.push(`specs (${config.specs.size}):`);
-for (const [name, s] of config.specs) {
-	lines.push(`  - ${name} τ=${s.temperature} weights=${JSON.stringify(s.weights)} filters=${JSON.stringify(s.filters ?? {})}`);
 }
 lines.push(`models (${config.models.size}):`);
 for (const [id, m] of config.models) {

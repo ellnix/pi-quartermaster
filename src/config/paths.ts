@@ -1,36 +1,38 @@
 /**
  * Configuration locations.
  *
- * User layer: agent and mailbox markdown in ~/.agents (symmetry with the
- * Agent Skills convention already in use), engine config (specs, models,
- * authority, evidence, overrides) under ~/.pi/agent/team.
- *
- * Project layer: .pi/agents and .pi/team, discovered from the working
- * directory up through ancestors. Project entries override user entries
- * of the same name. The project layer is optional and may stay empty
- * forever — the team is personal infrastructure and leaves no footprint
- * in the repos it works in.
+ * Everything lives under pi's agent directory (getAgentDir(), relocated
+ * wholesale by PI_CODING_AGENT_DIR): one home for the team's agents,
+ * mailboxes, engine config, evidence, and records. Project overrides
+ * live in the repo's .pi directory, discovered from the session's
+ * working directory up through ancestors — the same walk pi's shipped
+ * subagent example performs; pi exports no public helper for it.
  */
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 
-export const USER_AGENTS_DIR = path.join(os.homedir(), ".agents", "agents");
-export const USER_MAILBOXES_DIR = path.join(os.homedir(), ".agents", "mailboxes");
-
+/** The engine's home under the agent dir. */
 export function teamDir(): string {
 	return path.join(getAgentDir(), "team");
+}
+
+export function userAgentsDir(): string {
+	return path.join(teamDir(), "agents");
+}
+
+export function userMailboxesDir(): string {
+	return path.join(teamDir(), "mailboxes");
+}
+
+export function userTeamFile(name: string): string {
+	return path.join(teamDir(), name);
 }
 
 /** The team record for one convened team: traffic, reports, asks. */
 export function recordDir(teamId: string): string {
 	return path.join(teamDir(), "records", teamId);
-}
-
-export function userTeamFile(name: string): string {
-	return path.join(teamDir(), name);
 }
 
 function isDirectory(p: string): boolean {
@@ -42,8 +44,10 @@ function isDirectory(p: string): boolean {
 }
 
 /**
- * Nearest project .pi directory, walking from cwd up through ancestors.
- * Returns null when no .pi exists anywhere above cwd.
+ * Nearest project .pi directory, walking from the session's working
+ * directory up through ancestors. Returns null when no .pi exists
+ * anywhere above cwd. pi exports no helper for this walk — its own
+ * shipped subagent example hand-rolls the same one.
  */
 export function nearestProjectPiDir(cwd: string): string | null {
 	let current = path.resolve(cwd);

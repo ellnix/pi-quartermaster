@@ -8,7 +8,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { parseJsonc } from "./jsonc.ts";
+import { parse as parseJsonc } from "jsonc-parser";
 import { teamDir } from "./paths.ts";
 import type { DiscoveryWarning } from "./agents.ts";
 

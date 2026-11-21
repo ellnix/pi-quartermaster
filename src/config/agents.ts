@@ -7,15 +7,16 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseFrontmatter, toList } from "./frontmatter.ts";
-import { projectAgentsDir, USER_AGENTS_DIR } from "./paths.ts";
+import { projectAgentsDir, userAgentsDir } from "./paths.ts";
+import { validateSpec, type SpecDef } from "./spec.ts";
 
 export interface AgentDef {
 	name: string;
 	description: string;
 	/** Pre-approved tool surface; anything outside it must be asked for. */
 	tools?: string[];
-	/** Spec name (specs.jsonc) selecting the model policy. */
-	spec?: string;
+	/** The model policy, carried inline. Reusable specs live here, in agent definitions. */
+	spec?: SpecDef;
 	/** Direct physical model pin; skips the draw when present. */
 	model?: string;
 	systemPrompt: string;
@@ -30,7 +31,7 @@ export interface DiscoveryWarning {
 
 export function loadAgents(cwd: string, warnings: DiscoveryWarning[]): Map<string, AgentDef> {
 	const agents = new Map<string, AgentDef>();
-	collectFromDir(USER_AGENTS_DIR, "user", agents, warnings);
+	collectFromDir(userAgentsDir(), "user", agents, warnings);
 	const project = projectAgentsDir(cwd);
 	if (project) collectFromDir(project, "project", agents, warnings);
 	return agents;
@@ -81,6 +82,11 @@ function collectFromDir(
 			continue;
 		}
 
+		const spec =
+			parsed.frontmatter.spec !== undefined
+				? validateSpec(parsed.frontmatter.spec, filePath, warnings)
+				: undefined;
+
 		if (agents.has(name)) {
 			// A project file with the same name replaces the user one; that is
 			// the override rule, so only warn when both come from the same layer.
@@ -98,7 +104,7 @@ function collectFromDir(
 			name,
 			description,
 			tools: toList(parsed.frontmatter.tools),
-			spec: str(parsed.frontmatter.spec) || undefined,
+			spec: spec ?? undefined,
 			model: str(parsed.frontmatter.model) || undefined,
 			systemPrompt: parsed.body,
 			source,
@@ -107,6 +113,6 @@ function collectFromDir(
 	}
 }
 
-function str(value: string | string[] | undefined): string {
+function str(value: unknown): string {
 	return typeof value === "string" ? value.trim() : "";
 }

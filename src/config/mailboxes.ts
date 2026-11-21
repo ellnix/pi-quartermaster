@@ -9,7 +9,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseFrontmatter } from "./frontmatter.ts";
-import { projectMailboxesDir, USER_MAILBOXES_DIR } from "./paths.ts";
+import { projectMailboxesDir, userMailboxesDir } from "./paths.ts";
 import type { DiscoveryWarning } from "./agents.ts";
 
 export interface MailboxDef {
@@ -30,7 +30,7 @@ export interface MailboxDef {
 
 export function loadMailboxes(cwd: string, warnings: DiscoveryWarning[]): Map<string, MailboxDef> {
 	const mailboxes = new Map<string, MailboxDef>();
-	collect(USER_MAILBOXES_DIR, "user", mailboxes, warnings);
+	collect(userMailboxesDir(), "user", mailboxes, warnings);
 	const project = projectMailboxesDir(cwd);
 	if (project) collect(project, "project", mailboxes, warnings);
 	return mailboxes;
@@ -105,6 +105,6 @@ function collect(
 	}
 }
 
-function str(value: string | string[] | undefined): string {
+function str(value: unknown): string {
 	return typeof value === "string" ? value.trim() : "";
 }

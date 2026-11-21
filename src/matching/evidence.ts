@@ -1,10 +1,32 @@
 /**
  * The evidence store: Thompson posteriors per (model, dimension).
  *
- * Ratings are outcome-shaped (0-1 per trial), so a single bad day moves a
- * model a little and a pattern moves it a lot — Beta pseudo-counts carry
- * that naturally. Down-scored models are still drawn occasionally: the
- * sampling itself is the recovery path for wrongly-down-scored models.
+ * The statistics, in plain language:
+ *
+ * - Each (model, dimension) pair keeps two counters, a and b. Think of
+ *   a as "accumulated quality" and b as "accumulated shortfall": a
+ *   rating of 0.7 adds 0.7 to a and 0.3 to b; a rating of 0 adds 1 to b.
+ * - The pair (a, b) defines a Beta distribution — the standard way to
+ *   express "here is a belief about an unknown fraction, given this much
+ *   evidence." Its mean is a / (a + b): after a Beta(1,1) prior (one
+ *   pseudo-trial of "unknown quality") and a single 0.7 rating, the
+ *   mean is 1.7 / 3 ≈ 0.567. Fractions are fine: a weighted trial just
+ *   adds fractions to both counters, so a weight-0.6 rating moves the
+ *   belief 60% as much as a full one.
+ * - Why one bad day moves a model a little: counters only add. A model
+ *   with 40 good trials has a ≈ 39; one bad trial moves its mean from
+ *   ~0.95 to ~0.93, while the first trial ever recorded moves a fresh
+ *   model from 0.5 to 0.7. Early evidence is loud; old evidence is
+ *   stable — exactly the behavior a rating system should have.
+ * - "Thompson sampling" is the draw rule: instead of comparing the
+ *   means, each candidate SAMPLES its own Beta and the draw compares
+ *   the samples. A model rated 0.9 sometimes samples 0.7; a model
+ *   rated 0.6 sometimes samples 0.85. So a down-scored model still
+ *   wins occasionally — the recovery path for wrongly-down-scored
+ *   models is built into the arithmetic, not bolted on as policy.
+ *
+ * scripts/verify-math.ts asserts every property above empirically —
+ * review the assertions, not the algebra.
  *
  * Machine-owned: this file is rewritten freely by the engine. Human
  * priors live in models.yaml; durable facts in overrides.yaml.
@@ -78,13 +100,19 @@ export function evidenceSample(store: EvidenceStore, model: string, dimension: s
 	return sampleBeta(counts.a, counts.b);
 }
 
-/** Record an outcome (0-1) on a dimension; fractional outcomes allowed. */
+/**
+ * Record an outcome (0-1) on a dimension; fractional outcomes allowed.
+ * weight multiplies the trial mass: a spec that weights a dimension
+ * 0.6 records 0.6 of a trial, so strongly-weighted dimensions move
+ * faster under the same evidence.
+ */
 export function recordOutcome(
 	store: EvidenceStore,
 	model: string,
 	dimension: string,
 	outcome: number,
 	note?: string,
+	weight = 1,
 ): void {
 	let dims = store.get(model);
 	if (!dims) {
@@ -94,8 +122,9 @@ export function recordOutcome(
 	// Start at Beta(1, 1): one prior trial of "unknown quality" so the
 	// first real rating cannot run away with the estimate alone.
 	const counts = dims.get(dimension) ?? { a: 1, b: 1 };
-	counts.a += Math.max(0, Math.min(1, outcome));
-	counts.b += 1 - Math.max(0, Math.min(1, outcome));
+	const clamped = Math.max(0, Math.min(1, outcome));
+	counts.a += clamped * weight;
+	counts.b += (1 - clamped) * weight;
 	dims.set(dimension, counts);
 	saveEvidence(store);
 

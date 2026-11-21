@@ -13,7 +13,7 @@
 
 import type { ModelEntry, QuartermasterConfig, SpecDef } from "../config/index.ts";
 import { evidenceSample, type EvidenceStore } from "./evidence.ts";
-import type { OverridesFile } from "./overrides.ts";
+import type { Overrides } from "./overrides.ts";
 
 /** What the matcher needs to know about a candidate. */
 export interface Candidate {
@@ -46,7 +46,7 @@ export type DrawResult = DrawSuccess | DrawFailure;
 export function drawForSpec(
 	candidates: Candidate[],
 	config: QuartermasterConfig,
-	overrides: OverridesFile,
+	overrides: Overrides,
 	evidence: EvidenceStore,
 	spec: SpecDef,
 	specName: string,
@@ -129,7 +129,7 @@ function specAllowsUnrated(spec: SpecDef): boolean {
 	return Boolean(spec.filters?.allowUnrated);
 }
 
-function hasAnySignal(entry: ModelEntry | undefined, overrides: OverridesFile, evidence: EvidenceStore, modelId: string): boolean {
+function hasAnySignal(entry: ModelEntry | undefined, overrides: Overrides, evidence: EvidenceStore, modelId: string): boolean {
 	if (entry?.scores && Object.keys(entry.scores).length > 0) return true;
 	if (overrides.scores.has(modelId)) return true;
 	if ((evidence.get(modelId)?.size ?? 0) > 0) return true;
@@ -143,7 +143,7 @@ function hasAnySignal(entry: ModelEntry | undefined, overrides: OverridesFile, e
 function scoreDimensions(
 	modelId: string,
 	entry: ModelEntry | undefined,
-	overrides: OverridesFile,
+	overrides: Overrides,
 	evidence: EvidenceStore,
 ): Map<string, number> {
 	const dims = new Map<string, number>();

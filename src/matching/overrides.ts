@@ -30,7 +30,7 @@ export interface ScoreOverride {
 	setAt: string;
 }
 
-export interface OverridesFile {
+export interface Overrides {
 	/** By model id, and by "provider/<id>" for provider-wide cost facts. */
 	costs: Map<string, CostOverride>;
 	/** By model id. */
@@ -39,8 +39,8 @@ export interface OverridesFile {
 
 const OVERRIDES_FILE = () => path.join(teamDir(), "overrides.yaml");
 
-export function loadOverrides(): OverridesFile {
-	const file: OverridesFile = { costs: new Map(), scores: new Map() };
+export function loadOverrides(): Overrides {
+	const file: Overrides = { costs: new Map(), scores: new Map() };
 	let raw: string;
 	try {
 		raw = fs.readFileSync(OVERRIDES_FILE(), "utf8");
@@ -86,13 +86,13 @@ export function loadOverrides(): OverridesFile {
 	return file;
 }
 
-export function setCostOverride(overrides: OverridesFile, target: string, cost: number, reason?: string): void {
+export function setCostOverride(overrides: Overrides, target: string, cost: number, reason?: string): void {
 	overrides.costs.set(target, { cost, reason, setAt: new Date().toISOString().slice(0, 10) });
 	saveOverrides(overrides);
 }
 
 export function setScoreOverride(
-	overrides: OverridesFile,
+	overrides: Overrides,
 	model: string,
 	dimension: string,
 	value: number,
@@ -108,7 +108,7 @@ export function setScoreOverride(
  * Serialize with provenance on both channels: the comment is the human
  * reading, the underscore field is what survives the next rewrite.
  */
-function saveOverrides(overrides: OverridesFile): void {
+function saveOverrides(overrides: Overrides): void {
 	const lines: string[] = [
 		"# Quartermaster overrides — machine-managed. Written by set_cost and",
 		"# set_override with their provenance. Human priors belong in models.yaml;",

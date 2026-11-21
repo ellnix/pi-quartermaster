@@ -10,13 +10,13 @@ import type { Ack, MessageInput, QuartermasterEngine, RateInput, SetCostInput, S
 import { composeEngine } from "./compose-engine.ts";
 import { loadConfig, type QuartermasterConfig } from "./config/index.ts";
 import { loadEvidence, type EvidenceStore } from "./matching/evidence.ts";
-import { loadOverrides, setCostOverride, setScoreOverride, type OverridesFile } from "./matching/overrides.ts";
+import { loadOverrides, setCostOverride, setScoreOverride, type Overrides } from "./matching/overrides.ts";
 
 export interface EngineState {
 	ctx: ExtensionToolContext;
 	config: QuartermasterConfig;
 	evidence: EvidenceStore;
-	overrides: OverridesFile;
+	overrides: Overrides;
 }
 
 export function createEngine(ctx: ExtensionToolContext): QuartermasterEngine {

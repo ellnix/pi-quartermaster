@@ -127,6 +127,8 @@ export interface MessageInput {
 	member: string;
 	/** Message body. */
 	body: string;
+	/** True: interrupt the member's current run and steer it. False: queue a follow-up. */
+	steer?: boolean;
 }
 
 export interface SetCostInput {

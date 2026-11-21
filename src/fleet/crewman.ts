@@ -1,9 +1,9 @@
 /**
- * Crewman tools: the tools a child session gets, passed as customTools at
- * session creation. Children never load the quartermaster surface — the
- * guard in quartermaster.ts keeps it out — so these are their only
- * channels: report to the quartermaster, ask through mailboxes (PR #5),
- * and request permission (PR #6).
+ * Crewman tools: the tools a child session gets, passed as customTools
+ * at session creation. Children never load the quartermaster surface —
+ * the guard in quartermaster.ts keeps it out — so these are their only
+ * channels: report to the quartermaster, ask through mailboxes.
+ * (request_permission arrives with the permissions module.)
  *
  * Every tool closes over the team record path, so traffic lands in files
  * the quartermaster can inspect on demand: visible, not in-context.
@@ -11,12 +11,14 @@
 
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { appendReport } from "./record.ts";
+import { appendChannel, appendReport } from "./record.ts";
 
 export interface ReportEntry {
-	/** Tracking number, sequential per team record: r1, r2, ... The
-	 *  quartermaster cites it in ratings and messages; the crewman sees
-	 *  it echoed back and can be steered by reference. */
+	/**
+	 * Tracking number, sequential per team record: r1, r2, ... The
+	 * quartermaster cites it in ratings and messages; the crewman sees
+	 * it echoed back and can be steered by reference.
+	 */
 	id: string;
 	ts: number;
 	member: string;
@@ -25,7 +27,20 @@ export interface ReportEntry {
 	confidence?: number;
 }
 
-export function crewmanTools(memberName: string, recordPath: string): ToolDefinition[] {
+export interface SendReceipt {
+	/** The message's tracking number. */
+	id: string;
+}
+
+export interface CrewHooks {
+	/**
+	 * Validate and route a mailbox send. A string refusal is returned to the
+	 * sender verbatim; a receipt confirms the send and its tracking number.
+	 */
+	onSend: (mailbox: string, body: string) => string | SendReceipt;
+}
+
+export function crewmanTools(memberName: string, recordPath: string, hooks: CrewHooks): ToolDefinition[] {
 	return [
 		{
 			name: "report",
@@ -43,8 +58,6 @@ export function crewmanTools(memberName: string, recordPath: string): ToolDefini
 				summary: Type.String({ description: "What you did, found, or produced — complete and specific." }),
 				confidence: Type.Optional(Type.Number({ minimum: 0, maximum: 1, description: "Confidence in the result." })),
 			}),
-			// Explicit param typing: the TypeBox generic does not infer through
-			// the plain ToolDefinition return type.
 			async execute(
 				_toolCallId: string,
 				params: { status: "complete" | "partial" | "blocked"; summary: string; confidence?: number },
@@ -64,6 +77,44 @@ export function crewmanTools(memberName: string, recordPath: string): ToolDefini
 						},
 					],
 					details: entry as unknown as Record<string, unknown>,
+				};
+			},
+		},
+		{
+			name: "send",
+			label: "Send via mailbox",
+			description:
+				"Send a message to another member through one of your open mailboxes. The " +
+				"engine frames and logs the delivery, and the Quartermaster sees all traffic. " +
+				"A tracking number is echoed back to you and can be cited when the " +
+				"Quartermaster steers you. Your task lists your channels by name and " +
+				"recipient; anything beyond that about a channel is not your concern.",
+			promptSnippet: "Send messages to other members through your open mailboxes with send.",
+			parameters: Type.Object({
+				mailbox: Type.String({ description: "The mailbox name from your task's channels list." }),
+				body: Type.String({ description: "The message body." }),
+			}),
+			async execute(
+				_toolCallId: string,
+				params: { mailbox: string; body: string },
+			) {
+				const { onSend } = hooks;
+				const result = onSend(params.mailbox, params.body);
+				if (typeof result === "string") {
+					return {
+						content: [{ type: "text", text: result }],
+						isError: true,
+						details: {},
+					};
+				}
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Sent via ${params.mailbox} as ${result.id}: the recipient sees it when idle; the Quartermaster sees it always. ${result.id} can be cited to reference this message.`,
+						},
+					],
+					details: { mailbox: params.mailbox, id: result.id },
 				};
 			},
 		},

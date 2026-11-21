@@ -1,8 +1,8 @@
 /**
  * Engine assembly. Loads the configuration and machine-owned state once
  * per session and wires the operations that exist so far into the tool
- * surface. Later PRs extend the parts: channel reads and permission
- * resolution.
+ * surface. The permissions module is still ahead; pending and resolve
+ * delegate to the composed fallback until it lands.
  */
 
 import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
@@ -10,8 +10,12 @@ import type {
 	Ack,
 	ConveneInput,
 	MessageInput,
+	PendingAsk,
 	QuartermasterEngine,
 	RateInput,
+	ReadChannelInput,
+	ReadChannelResult,
+	ResolveAskInput,
 	SetCostInput,
 	SetOverrideInput,
 	TeamStatus,
@@ -21,6 +25,7 @@ import { loadConfig, type QuartermasterConfig } from "./config/index.ts";
 import { loadEvidence, recordOutcome, type EvidenceStore } from "./matching/evidence.ts";
 import { loadOverrides, setCostOverride, setScoreOverride, type Overrides } from "./matching/overrides.ts";
 import { Fleet } from "./fleet/fleet.ts";
+import { readChannelLog, readReports } from "./fleet/record.ts";
 
 export interface EngineState {
 	ctx: ExtensionToolContext;
@@ -68,6 +73,45 @@ export function createEngine(ctx: ExtensionToolContext): QuartermasterEngine {
 			return state.fleet?.dissolve() ?? notConvened();
 		},
 
+		readChannel: async (input: ReadChannelInput): Promise<ReadChannelResult> => {
+			const tail = input.tail ?? 20;
+			const recordPath = state.fleet?.record;
+			if (!recordPath) {
+				return {
+					channel: input.channel,
+					messages: [],
+					warnings: [
+						input.channel === "reports"
+							? "no convened team — convene first, or read a previous record by naming a channel file"
+							: "no convened team — channel logs exist per team record",
+					],
+				};
+			}
+			if (input.channel === "reports") {
+				const entries = readReports(recordPath, tail);
+				return {
+					channel: "reports",
+					messages: entries.map((e) => ({
+						channel: `report ${e.id}`,
+						ts: e.ts,
+						body: `${e.status}: ${e.summary}${e.confidence !== undefined ? ` (confidence ${e.confidence})` : ""}`,
+					})),
+					warnings: [],
+				};
+			}
+			const entries = readChannelLog(recordPath, input.channel, tail);
+			return { channel: input.channel, messages: entries, warnings: [] };
+		},
+
+		message: async (input: MessageInput): Promise<Ack> => {
+			const fleet = state.fleet;
+			if (!fleet?.convened) {
+				return { ok: false, message: "no convened team — message members after convening" };
+			}
+			const result = fleet.message(input.member, input.body, input.steer ?? false);
+			return { ok: result.ok, message: result.message };
+		},
+
 		rate: async (input: RateInput): Promise<Ack> => {
 			// Rating resolves by member: the member's spec says what its model
 			// was drawn for, so the evidence lands on the drawn model weighted
@@ -93,13 +137,6 @@ export function createEngine(ctx: ExtensionToolContext): QuartermasterEngine {
 			};
 		},
 
-		message: async (input: MessageInput): Promise<Ack> => {
-			return {
-				ok: false,
-				message: `messaging arrives with the mailboxes module — ${input.member} cannot receive it yet`,
-			};
-		},
-
 		setCost: async (input: SetCostInput): Promise<Ack> => {
 			const cost = clamp01(input.cost);
 			setCostOverride(state.overrides, input.target, cost, input.reason);
@@ -116,6 +153,15 @@ export function createEngine(ctx: ExtensionToolContext): QuartermasterEngine {
 				ok: true,
 				message: `override recorded: ${input.model} / ${input.dimension} = ${value}${input.reason ? ` — ${input.reason}` : ""}`,
 			};
+		},
+
+		pendingAsks: async (): Promise<PendingAsk[]> => {
+			// The permissions module is ahead; nothing can ask yet.
+			return [];
+		},
+
+		resolveAsk: async (): Promise<Ack> => {
+			return { ok: false, message: "the permissions module is ahead — nothing can ask yet" };
 		},
 	});
 }

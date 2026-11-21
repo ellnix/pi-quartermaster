@@ -151,10 +151,15 @@ export class Fleet {
 		// The child marker is process-global, so creations serialize.
 		const creation = this.creationChain.then(async () => {
 			// The convene override is built on the fly and wins; the agent's
-			// own inline spec is the reusable form. Both are objects now.
+			// own inline spec is the reusable form. Both are objects now. Its
+			// validation warnings join the convene result: a spec the user
+			// believes is enforced but silently dropped (a minScores key the
+			// parser refuses, say) is worse than no spec at all.
 			let spec: SpecDef | undefined = agent.spec;
 			if (specOverride !== undefined) {
-				spec = validateSpec(specOverride, `convene member ${agent.name}`, []) ?? undefined;
+				const specWarnings: Array<{ file: string; message: string }> = [];
+				spec = validateSpec(specOverride, `convene member ${agent.name}`, specWarnings) ?? undefined;
+				for (const w of specWarnings) warnings.push(`${w.file}: ${w.message}`);
 			}
 			const member: FleetMember = {
 				name: agent.name,

@@ -221,18 +221,21 @@ check(
 );
 
 // Case 2: allowUnrated still gambles — scouting is unchanged. An unknown's
-// suitability comes from its (empty) score vector and cost alone, so over
-// many draws it takes a real share of the pool.
+// suitability comes from its (empty) score vector and cost alone, so it takes
+// a real but minority share against a listed model's prior (~17% here, at the
+// pool's temperature). The assertion is a floor well below that: the claim is
+// "it can still draw", not a specific share.
 const scoutGhost = share(
 	{ ...scout, weights: { "reviewing-code": 1.0 } },
 	ghostPool,
 	400,
 	{ evidence: ghostEvidence },
 );
+const scoutGhostShare = fraction(scoutGhost, "ghost/unlisted-model");
 check(
 	"case 2: the same model draws under allowUnrated (scout unchanged)",
-	(ghostDraws.get("ghost/unlisted-model") ?? 0) === 0 && fraction(scoutGhost, "ghost/unlisted-model") > 0.15,
-	`rated ghost share 0%, scout ghost share ${(fraction(scoutGhost, "ghost/unlisted-model") * 100).toFixed(1)}%`,
+	(ghostDraws.get("ghost/unlisted-model") ?? 0) === 0 && scoutGhostShare > 0.08,
+	`rated ghost share 0%, scout ghost share ${(scoutGhostShare * 100).toFixed(1)}%`,
 );
 
 // Case 3: a listed model keeps drawing, with evidence refining its scores.
@@ -387,6 +390,31 @@ check(
 	"case 4b: no score anywhere on a gated dimension fails closed, with a note",
 	!noValue.ok && noValue.error.includes("score floor") && noValue.notes.some((n) => n.includes("no score on a gated dimension")),
 	noValue.ok ? `it drew ${noValue.modelId}` : `"${noValue.error}"`,
+);
+
+// A candidate can fail one gated dimension for absence and another for a real
+// bar. It must be counted once, under the concrete failure: a note claiming it
+// was excluded for missing data would misdescribe a bar it failed on a score
+// it did carry.
+const mixedGate: SpecDef = {
+	weights: { "reviewing-code": 1.0 },
+	temperature: 0.5,
+	filters: { minScores: { "absent-dim": 0.3, "reviewing-code": 0.99 } },
+};
+const mixed = drawForSpec(
+	[candidate("gated/high-model", "gated", 5)],
+	config,
+	overrides,
+	evidence,
+	mixedGate,
+	"case4/mixed-gate",
+);
+check(
+	"a candidate failing a bar and missing another dimension is counted once, as below-bar",
+	!mixed.ok &&
+		mixed.notes.some((n) => n.includes("below a gated bar")) &&
+		!mixed.notes.some((n) => n.includes("no score on a gated dimension")),
+	mixed.notes.join(" | "),
 );
 
 // --- Spec frontmatter parsing of the new filters --------------------------

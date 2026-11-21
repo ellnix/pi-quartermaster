@@ -153,9 +153,9 @@ frontmatter above), and an override at convene is built on the fly:
 - Selection = softmax over suitability at the spec's temperature —
   bounded chaos. τ near zero for paths where diversity is not worth the
   error rate (security review); τ high for insight-hunting roles.
-- Hard filters (capability, cost floor — cost is 0-1 with 1 = cheapest,
-  so a floor is a minimum — score floor, and auth) are crossed by
-  nothing.
+- Hard filters — capability (`require`), the cost floor (`minCostScore`;
+  cost is 0-1 with 1 = cheapest, so a floor is a minimum), the score
+  floor (`minScores`), and auth — are crossed by nothing.
 - **`minScores` is a requirement, not a tilt.** `{ "reviewing-code": 0.75 }`
   excludes every candidate below 0.75 on that dimension before the draw,
   reading the deterministic stack: overrides beat `models.yaml`, and where

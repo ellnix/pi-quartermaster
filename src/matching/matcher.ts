@@ -138,19 +138,20 @@ export function drawForSpec(
 	}
 	const scoreGate = spec.filters?.minScores;
 	if (scoreGate && Object.keys(scoreGate).length > 0) {
-		const before = eligible.length;
-		let unknown = 0;
+		let absent = 0;
+		let belowBar = 0;
 		eligible = eligible.filter((p) => {
-			const gated = scoreGateAbove(p.candidate.modelId, p.entry, scoreGate, overrides, evidence);
-			if (!gated.known) unknown += 1;
-			return gated.passes;
+			const verdict = gateVerdict(p.candidate.modelId, p.entry, scoreGate, overrides, evidence);
+			if (verdict === "absent") absent += 1;
+			if (verdict === "below-bar") belowBar += 1;
+			return verdict === "pass";
 		});
-		if (before > eligible.length) {
-			notes.push(`score floor filtered ${before - eligible.length} candidate(s)`);
+		if (belowBar > 0) {
+			notes.push(`score floor excluded ${belowBar} candidate(s) below a gated bar`);
 		}
-		if (unknown > 0) {
+		if (absent > 0) {
 			notes.push(
-				`score floor excluded ${unknown} candidate(s) with no score on a gated dimension — a requirement is met by evidence, not by absence`,
+				`score floor excluded ${absent} candidate(s) carrying no score on a gated dimension — a requirement is met by evidence, not by absence`,
 			);
 		}
 		if (eligible.length === 0) {
@@ -221,27 +222,31 @@ export function costPenalty(costScore: number, lambda: number): number {
  *
  * The stack is the deterministic one — overrides beat models.yaml, and where
  * neither speaks the evidence posterior mean applies. Never the Thompson
- * sample: requirements are stable, chaos lives in the softmax draw. A
- * dimension with no value anywhere fails the gate, because absence is not a
- * rating; `known: false` lets the caller say so in a note.
+ * sample: requirements are stable, chaos lives in the softmax draw.
+ *
+ * One verdict per candidate, because a candidate can be both absent on one
+ * gated dimension and below the bar on another: a concrete failure is the
+ * real reason, so `below-bar` wins over `absent`. Counting both would make
+ * the notes claim a model was excluded for missing data when a bar it did
+ * have a score for was what failed it.
  */
-function scoreGateAbove(
+function gateVerdict(
 	modelId: string,
 	entry: ModelEntry | undefined,
 	gate: Record<string, number>,
 	overrides: Overrides,
 	evidence: EvidenceStore,
-): { passes: boolean; known: boolean } {
-	let known = true;
+): "pass" | "below-bar" | "absent" {
+	let absent = false;
 	for (const [dimension, floor] of Object.entries(gate)) {
 		const value = deterministicScore(modelId, entry, overrides, evidence, dimension);
 		if (value === undefined) {
-			known = false;
+			absent = true;
 			continue;
 		}
-		if (value < floor) return { passes: false, known };
+		if (value < floor) return "below-bar";
 	}
-	return { passes: known, known };
+	return absent ? "absent" : "pass";
 }
 
 /** The deterministic score stack: override, then models.yaml, then posterior mean. */

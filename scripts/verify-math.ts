@@ -91,6 +91,13 @@ if (lowHigh / DRAWS < 0.01 || lowHigh / DRAWS > 0.15) {
 // draw relies on: the cheapest is never penalized, the penalty is monotone in
 // cost, it leaves equal-cost odds exactly alone (it cancels in the odds
 // ratio), and lambda 0 changes nothing at all.
+//
+// Scope note: the odds identities below are algebraic — they hold the form,
+// not the plumbing, because this script subtracts the penalty itself. That
+// drawForSpec actually applies it, and that the cancellation survives the real
+// softmax over real candidates, is smoke-matcher's job (its cost cases assert
+// measured shares over thousands of draws). Cite both, never this alone, for
+// end-to-end coverage.
 const lambda = DEFAULT_MATCHING.costLambda;
 check("cost penalty at cost 1 (cheapest) is 0", costPenalty(1, lambda), 0, 0.0000001);
 check("cost penalty at cost 0 is lambda", costPenalty(0, lambda), lambda, 0.0000001);

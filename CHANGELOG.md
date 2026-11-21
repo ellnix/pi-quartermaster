@@ -39,6 +39,18 @@
   changes (unlisted-model admission, cost-only models, score floors,
   lambda 0, equal-cost odds).
 
+### Known boundaries and issues
+- A project `models.yaml` entry replaces the user entry of the same name
+  wholesale, so a project entry carrying only `cost:` also drops the
+  user's `scores`. Under the new whitelist that entry no longer exists as
+  far as rating is concerned, so the model drops out of non-`allowUnrated`
+  draws entirely. Write project entries complete, or leave them to the user
+  file.
+- A gated dimension with no score anywhere excludes the candidate
+  (absence is not a rating). The draw notes how many were excluded that
+  way, but a model with no scores at all cannot satisfy a `minScores`
+  spec — list it in `models.yaml` first.
+
 ## [0.1.1]
 ### Fixed
 - Project configuration discovery stops at the git repository root. A

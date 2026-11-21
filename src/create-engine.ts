@@ -38,7 +38,7 @@ export function createEngine(ctx: ExtensionToolContext): QuartermasterEngine {
 				pendingAsks: 0,
 				unreadReports: 0,
 				warnings: [
-					`configured: ${config.agents.size} agent(s), ${config.mailboxes.size} mailbox(es), ${config.specs.size} spec(s), ${config.models.size} scored model(s)`,
+					`configured: ${config.agents.size} agent(s), ${config.mailboxes.size} mailbox(es), ${config.models.size} scored model(s)`,
 					...(config.emptyState ? [config.emptyState] : warnings),
 				],
 			};

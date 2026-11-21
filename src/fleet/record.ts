@@ -8,7 +8,7 @@
  */
 
 import * as fs from "node:fs";
-import type { ReportEntry } from "./child-tools.ts";
+import type { ReportEntry } from "./crewman.ts";
 
 export function ensureRecord(recordPath: string): void {
 	fs.mkdirSync(recordPath, { recursive: true });
@@ -39,8 +39,13 @@ export function readJsonl<T>(file: string, tail?: number): T[] {
 	return out;
 }
 
-export function appendReport(recordPath: string, entry: ReportEntry): void {
-	appendJsonl(`${recordPath}/reports.jsonl`, entry as unknown as Record<string, unknown>);
+export function appendReport(recordPath: string, entry: Omit<ReportEntry, "id">): ReportEntry {
+	const existing = readReports(recordPath);
+	// Sequential per record: r1, r2, ... An explicit count beats parsing the
+	// last line, because a torn line must not restart the sequence.
+	const numbered: ReportEntry = { id: `r${existing.length + 1}`, ...entry };
+	appendJsonl(`${recordPath}/reports.jsonl`, numbered as unknown as Record<string, unknown>);
+	return numbered;
 }
 
 export function readReports(recordPath: string, tail?: number): ReportEntry[] {

@@ -24,7 +24,7 @@ import { drawForSpec, type Candidate } from "../matching/matcher.ts";
 import type { EvidenceStore } from "../matching/evidence.ts";
 import type { Overrides } from "../matching/overrides.ts";
 import { recordDir } from "../config/paths.ts";
-import { childTools } from "./child-tools.ts";
+import { crewmanTools } from "./crewman.ts";
 import { ensureRecord, readReports } from "./record.ts";
 
 /** Set around child session creation; quartermaster.ts stays inert under it. */
@@ -156,7 +156,7 @@ export class Fleet {
 				// crewman channels must be named in it explicitly. The agent
 				// file's tools list governs built-ins; the engine always grants
 				// the channels — a member cannot be stripped of reporting.
-				const tools = childTools(member.name, this.recordPath!);
+				const tools = crewmanTools(member.name, this.recordPath!);
 				const allowlist = [...new Set([...(agent.tools ?? DEFAULT_TOOLS), ...tools.map((t) => t.name)])];
 				const created = await createAgentSession({
 					cwd: this.ctx.cwd,

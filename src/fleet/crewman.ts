@@ -14,6 +14,10 @@ import { Type } from "typebox";
 import { appendReport } from "./record.ts";
 
 export interface ReportEntry {
+	/** Tracking number, sequential per team record: r1, r2, ... The
+	 *  quartermaster cites it in ratings and messages; the crewman sees
+	 *  it echoed back and can be steered by reference. */
+	id: string;
 	ts: number;
 	member: string;
 	status: "complete" | "partial" | "blocked";
@@ -21,7 +25,7 @@ export interface ReportEntry {
 	confidence?: number;
 }
 
-export function childTools(memberName: string, recordPath: string): ToolDefinition[] {
+export function crewmanTools(memberName: string, recordPath: string): ToolDefinition[] {
 	return [
 		{
 			name: "report",
@@ -45,16 +49,20 @@ export function childTools(memberName: string, recordPath: string): ToolDefiniti
 				_toolCallId: string,
 				params: { status: "complete" | "partial" | "blocked"; summary: string; confidence?: number },
 			) {
-				const entry: ReportEntry = {
+				const entry = appendReport(recordPath, {
 					ts: Date.now(),
 					member: memberName,
 					status: params.status,
 					summary: params.summary,
 					confidence: params.confidence,
-				};
-				appendReport(recordPath, entry);
+				});
 				return {
-					content: [{ type: "text", text: `Reported ${params.status}: the Quartermaster will see it on its next read.` }],
+					content: [
+						{
+							type: "text",
+							text: `Reported ${params.status} as ${entry.id}: the Quartermaster will see it on its next read. It can reference ${entry.id} when rating or steering you.`,
+						},
+					],
 					details: entry as unknown as Record<string, unknown>,
 				};
 			},

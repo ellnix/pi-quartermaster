@@ -11,7 +11,10 @@
     "extensions": [
       "./src/quartermaster.ts"
     ],
-    "skills": []
+    "skills": [
+      "./skills/team-setup",
+      "./skills/teamwork"
+    ]
   },
   "dependencies": {
     "js-yaml": "^4.1.0",

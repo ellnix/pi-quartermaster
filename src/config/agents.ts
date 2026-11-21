@@ -64,10 +64,10 @@ function collectFromDir(
 		}
 
 		const parsed = parseFrontmatter(content);
-		if (!parsed) {
+		if (!parsed.ok) {
 			warnings.push({
 				file: filePath,
-				message: "no frontmatter, or frontmatter does not start at line 1 — skipped",
+				message: `${parsed.reason} — skipped`,
 			});
 			continue;
 		}

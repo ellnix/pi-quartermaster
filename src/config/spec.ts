@@ -50,6 +50,14 @@ export function validateSpec(
 			warnings.push({ file: context, message: `spec weight for "${dim}" is not a number — skipped dimension` });
 			continue;
 		}
+		if (w < 0 || w > 1) {
+			warnings.push({
+				file: context,
+				message: `spec weight for "${dim}" is ${w} — weights are 0-1 (fractional influence, not a multiplier) — clamped`,
+			});
+			weights[dim] = Math.max(0, Math.min(1, w));
+			continue;
+		}
 		weights[dim] = w;
 	}
 	if (Object.keys(weights).length === 0) {
@@ -72,11 +80,22 @@ export function validateSpec(
 		if (Array.isArray(f.require)) {
 			filters.require = f.require.filter((m): m is string => typeof m === "string");
 		}
-		if (typeof f.minCostScore === "number" && Number.isFinite(f.minCostScore)) {
-			filters.minCostScore = f.minCostScore;
+		if (f.minCostScore !== undefined) {
+			if (typeof f.minCostScore !== "number" || !Number.isFinite(f.minCostScore) || f.minCostScore < 0 || f.minCostScore > 1) {
+				warnings.push({
+					file: context,
+					message: "spec.filters.minCostScore must be a number in [0, 1] (1 = cheapest) — filter ignored",
+				});
+			} else {
+				filters.minCostScore = f.minCostScore;
+			}
 		}
-		if (typeof f.allowUnrated === "boolean") {
-			filters.allowUnrated = f.allowUnrated;
+		if (f.allowUnrated !== undefined) {
+			if (typeof f.allowUnrated !== "boolean") {
+				warnings.push({ file: context, message: "spec.filters.allowUnrated must be true or false — filter ignored" });
+			} else {
+				filters.allowUnrated = f.allowUnrated;
+			}
 		}
 	}
 

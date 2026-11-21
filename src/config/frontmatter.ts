@@ -4,35 +4,41 @@
  * The YAML block is parsed by js-yaml — the same dependency models.yaml
  * uses — so frontmatter may use any YAML form: nested objects (an agent's
  * inline spec), flow lists, quoted strings.
+ *
+ * Parse failures report their reason: an agent fixing a broken
+ * configuration needs the parser's actual error, not "no frontmatter".
  */
 
 import yaml from "js-yaml";
 
-export interface ParsedFrontmatter {
-	frontmatter: Record<string, unknown>;
-	body: string;
-}
+export type FrontmatterResult =
+	| { ok: true; frontmatter: Record<string, unknown>; body: string }
+	| { ok: false; reason: string };
 
-export function parseFrontmatter(content: string): ParsedFrontmatter | null {
+export function parseFrontmatter(content: string): FrontmatterResult {
 	const lines = content.split(/\r?\n/);
-	if (lines[0]?.trim() !== "---") return null;
+	if (lines[0]?.trim() !== "---") {
+		return { ok: false, reason: "no frontmatter, or it does not start at line 1" };
+	}
 
 	const end = lines.indexOf("---", 1);
-	if (end === -1) return null; // no closing fence
+	if (end === -1) {
+		return { ok: false, reason: "no closing fence" };
+	}
 
 	let parsed: unknown;
 	try {
 		parsed = yaml.load(lines.slice(1, end).join("\n"));
-	} catch {
-		return null; // malformed YAML: the discovery layer reports and skips
+	} catch (err) {
+		return { ok: false, reason: `invalid YAML: ${err instanceof Error ? err.message : String(err)}` };
 	}
 	if (typeof parsed === "undefined") parsed = {};
 	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-		return null;
+		return { ok: false, reason: "frontmatter block is not a YAML object" };
 	}
 
 	const body = lines.slice(end + 1).join("\n").trim();
-	return { frontmatter: parsed as Record<string, unknown>, body };
+	return { ok: true, frontmatter: parsed as Record<string, unknown>, body };
 }
 
 /** Normalize a tools/tags value to a list; CSV strings stay accepted. */

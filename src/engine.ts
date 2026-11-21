@@ -7,6 +7,8 @@
  * not-configured state so the surface is callable from the first commit.
  */
 
+import type { WakePolicy } from "./config/authority.ts";
+
 /**
  * A spec built on the fly by the quartermaster. The persistent form —
  * what an agent file references — lives in the config module's specs;
@@ -171,6 +173,19 @@ export interface Ack {
 	warnings?: string[];
 }
 
+/**
+ * Where wakes come from: the active team's record dir and the policy that
+ * governs them. The extension watches for these two files only, so the shape
+ * deliberately names a directory rather than a set of files — channel logs
+ * are never a wake source.
+ */
+export interface WakeSource {
+	/** The active team's record directory. */
+	recordPath: string;
+	/** Whether and how reports and asks wake the quartermaster. */
+	policy: WakePolicy;
+}
+
 /** Everything the quartermaster tools need from the implementation. */
 export interface QuartermasterEngine {
 	convene(input: ConveneInput): Promise<TeamStatus>;
@@ -183,6 +198,12 @@ export interface QuartermasterEngine {
 	pendingAsks(): Promise<PendingAsk[]>;
 	resolveAsk(input: ResolveAskInput): Promise<Ack>;
 	dissolve(): Promise<TeamStatus>;
+	/**
+	 * The active team's record directory and wake policy, or null when no team
+	 * is convened. Synchronous on purpose: it is read after every convene and
+	 * dissolve, and a watcher must never be pointed at a promise.
+	 */
+	wakeSource(): WakeSource | null;
 }
 
 /**
@@ -235,6 +256,10 @@ export class NotConfiguredEngine implements QuartermasterEngine {
 
 	async dissolve(): Promise<TeamStatus> {
 		return this.team("nothing to dissolve");
+	}
+
+	wakeSource(): WakeSource | null {
+		return null;
 	}
 
 	private team(message: string): TeamStatus {

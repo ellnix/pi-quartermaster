@@ -66,3 +66,4 @@ export function loadConfig(cwd: string): QuartermasterConfig {
 
 export type { AgentDef, MailboxDef, ModelEntry, AuthorityConfig, DiscoveryWarning };
 export type { SpecDef, SpecFilters } from "./spec.ts";
+export type { MatchingPolicy, WakePolicy } from "./authority.ts";

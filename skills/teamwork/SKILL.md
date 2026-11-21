@@ -41,9 +41,14 @@ Standing orders for the quartermaster.
 ## While the team works
 
 - **Clarifications flow through mailboxes; reports flow to you.** Relay
-  pointers, never prose. Read channels on demand with `read_channel`;
-  nothing is pushed into your context. The logs are plain JSONL — read
-  them with your own tools and run any analysis you like.
+  pointers, never prose. Mailbox traffic stays on demand — read channels
+  with `read_channel`; the logs are plain JSONL, so read them with your
+  own tools and run any analysis you like. Reports and permission asks
+  do arrive as short **wake digests** (ids, members, one-line summaries)
+  so you hear about a blocked member or a finished task without a user
+  ping — treat a digest as a pointer into the record, not as the report.
+  A wake lands as a follow-up: never mid-turn, so you are never steered
+  by it.
 - **Members cite tracking numbers**: reports are `r1, r2, ...`, messages
   `m1, m2, ...`. Steer by reference — "regarding r3, do X instead" —
   rather than re-describing.

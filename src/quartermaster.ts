@@ -14,8 +14,18 @@
  */
 
 import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
+import { Box, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { createEngine } from "./create-engine.ts";
+import { DEFAULT_WAKE } from "./config/authority.ts";
+import {
+	WAKE_CUSTOM_TYPE,
+	WakeWatcher,
+	syncWake,
+	wakeMessage,
+	type WakeDetails,
+	type WakeNotice,
+} from "./fleet/wake.ts";
 import {
 	type Ack,
 	type ConveneInput,
@@ -97,6 +107,43 @@ export default function quartermaster(pi: ExtensionAPI): void {
 		return engine;
 	};
 
+	// Wakes: the record watcher delivers digests as custom messages, never user
+	// messages — machine traffic must not impersonate the user. `followUp` keeps
+	// a running quartermaster unsteered; `triggerTurn` starts a turn when idle.
+	const wake = new WakeWatcher(DEFAULT_WAKE, (notice: WakeNotice) => {
+		const { message, options } = wakeMessage(notice);
+		pi.sendMessage(message, options);
+	});
+
+	/**
+	 * Point the watcher at the active team's record, or park it. Called after
+	 * convene and dissolve — the only two operations that move the record path
+	 * — and never polled, so the watcher cannot drift from the live team.
+	 */
+	const followTeam = (active: QuartermasterEngine | null): void => {
+		if (!active) return;
+		syncWake(wake, active.wakeSource());
+	};
+
+	pi.on("session_shutdown", () => {
+		wake.stop();
+	});
+
+	// Wakes arrive without a user prompt, so they must be visible in the
+	// transcript on their own: a custom message that only the model saw would
+	// be an invisible turn in the user's session.
+	pi.registerMessageRenderer(WAKE_CUSTOM_TYPE, (message, { expanded, outputPad }, theme) => {
+		const details = message.details as WakeDetails | undefined;
+		const heading = theme.fg("accent", "[wake]");
+		let body = `${heading} ${message.content}`;
+		if (expanded && details) {
+			body += `\n${theme.fg("dim", `${details.reports.length} report(s), ${details.asks.length} ask(s) — ${details.recordPath}`)}`;
+		}
+		const box = new Box(outputPad, 1, (text) => theme.bg("customMessageBg", text));
+		box.addChild(new Text(body, 0, 0));
+		return box;
+	});
+
 	pi.registerTool({
 		name: "convene_team",
 		label: "Convene team",
@@ -155,7 +202,11 @@ export default function quartermaster(pi: ExtensionAPI): void {
 				),
 			),
 		}),
-		execute: async (_id, params: ConveneInput, _sig, _up, ctx) => teamText(await getEngine(ctx).convene(params)),
+		execute: async (_id, params: ConveneInput, _sig, _up, ctx) => {
+			const status = await getEngine(ctx).convene(params);
+			followTeam(engine);
+			return teamText(status);
+		},
 	});
 
 	pi.registerTool({
@@ -287,6 +338,10 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			"ratings wastes the session's evidence. The record persists; reconvening " +
 			"draws fresh models with the record as the blackboard.",
 		parameters: Type.Object({}),
-		execute: async (_id, _params, _sig, _up, ctx) => teamText(await getEngine(ctx).dissolve()),
+		execute: async (_id, _params, _sig, _up, ctx) => {
+			const status = await getEngine(ctx).dissolve();
+			followTeam(engine);
+			return teamText(status);
+		},
 	});
 }

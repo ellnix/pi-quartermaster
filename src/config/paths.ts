@@ -5,8 +5,10 @@
  * wholesale by PI_CODING_AGENT_DIR): one home for the team's agents,
  * mailboxes, engine config, evidence, and records. Project overrides
  * live in the repo's .pi directory, discovered from the session's
- * working directory up through ancestors — the same walk pi's shipped
- * subagent example performs; pi exports no public helper for it.
+ * working directory up through ancestors and stopping at the git
+ * repository root — passing that root would let a repo without .pi
+ * inherit the global agent dir as project config. pi exports no public
+ * helper for this walk.
  */
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -44,16 +46,40 @@ function isDirectory(p: string): boolean {
 }
 
 /**
+ * True when the directory holds a git marker: `.git` as a directory in a
+ * clone, as a file in worktrees and submodules.
+ *
+ * Only a missing marker means "no repository here". Any other stat failure
+ * (EACCES, ELOOP) still stops the walk — walking past a root we merely
+ * cannot inspect is the bug this check exists to prevent.
+ */
+function hasGitMarker(dir: string): boolean {
+	try {
+		fs.statSync(path.join(dir, ".git"));
+		return true;
+	} catch (err) {
+		return (err as NodeJS.ErrnoException).code !== "ENOENT";
+	}
+}
+
+/**
  * Nearest project .pi directory, walking from the session's working
- * directory up through ancestors. Returns null when no .pi exists
- * anywhere above cwd. pi exports no helper for this walk — its own
- * shipped subagent example hand-rolls the same one.
+ * directory up through ancestors and stopping at the git repository root.
+ *
+ * `.git` counts whether it is a directory or a file, so worktrees and
+ * submodules stop at their own root. Returns null when the walk ends without
+ * finding a .pi: either a .git marker stopped it first — the nearest .pi
+ * lies above the repository root — or no .git exists before the filesystem
+ * root and no .pi was found on the way. That second case means a session
+ * started in a non-repository directory under $HOME can still find ~/.pi,
+ * which is accepted, documented behaviour.
  */
 export function nearestProjectPiDir(cwd: string): string | null {
 	let current = path.resolve(cwd);
 	while (true) {
 		const candidate = path.join(current, ".pi");
 		if (isDirectory(candidate)) return candidate;
+		if (hasGitMarker(current)) return null;
 		const parent = path.dirname(current);
 		if (parent === current) return null;
 		current = parent;

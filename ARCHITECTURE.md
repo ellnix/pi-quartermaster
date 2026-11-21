@@ -103,7 +103,9 @@ The package itself carries none of this.
 
 Markdown files, frontmatter + body-as-system-prompt, discovered from
 the agent dir (`team/agents/`, relocated by `PI_CODING_AGENT_DIR`)
-and `.pi/agents/` (project, nearest ancestor):
+and `.pi/agents/` (project, nearest ancestor within the git repository
+root — when a repository root exists, the walk never reaches a `.pi`
+outside it; with no repository at all it can reach the filesystem root):
 
 ```markdown
 ---

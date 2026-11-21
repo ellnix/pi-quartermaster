@@ -31,7 +31,7 @@ import type { EvidenceStore } from "../matching/evidence.ts";
 import type { Overrides } from "../matching/overrides.ts";
 import { recordDir } from "../config/paths.ts";
 import { crewmanTools, type CrewHooks, type SendReceipt } from "./crewman.ts";
-import { appendChannel, ensureRecord, readReports } from "./record.ts";
+import { appendAsk, appendChannel, askResolution, ensureRecord, pendingAsks, readReports } from "./record.ts";
 
 /** Set around child session creation; quartermaster.ts stays inert under it. */
 export const CHILD_MARKER = "QM_CHILD";
@@ -189,7 +189,10 @@ export class Fleet {
 				// crewman channels must be named in it explicitly. The agent
 				// file's tools list governs built-ins; the engine always grants
 				// the channels — a member cannot be stripped of reporting.
-				const hooks: CrewHooks = { onSend: (mailbox, body) => this.routeSend(member, mailbox, body) };
+				const hooks: CrewHooks = {
+					onSend: (mailbox, body) => this.routeSend(member, mailbox, body),
+					onAsk: (tool, args, why) => this.registerAsk(member, tool, args, why),
+				};
 				const tools = crewmanTools(member.name, this.recordPath!, hooks);
 				const allowlist = [...new Set([...(agent.tools ?? DEFAULT_TOOLS), ...tools.map((t) => t.name)])];
 				const created = await createAgentSession({
@@ -362,6 +365,36 @@ export class Fleet {
 		return { modelId: member.modelId, dimensions };
 	}
 
+	/**
+	 * A child asked for a tool outside its granted set. The ask lands in the
+	 * record; the child waits while the quartermaster resolves it through
+	 * resolve_ask, which appends the resolution here. File-mediated, so the
+	 * waiting and the resolution never depend on shared live state.
+	 */
+	private registerAsk(member: FleetMember, tool: string, args: string, why: string): Promise<{ approve: boolean; note: string }> {
+		const id = `${Date.now().toString(36)}-${member.name}`;
+		appendAsk(this.recordPath!, { id, ts: Date.now(), member: member.name, tool, args, why });
+		const recordPath = this.recordPath!;
+		return new Promise((resolve) => {
+			const started = Date.now();
+			const poll = setInterval(() => {
+				const resolution = askResolution(recordPath, id);
+				if (resolution) {
+					clearInterval(poll);
+					const note = resolution.approve
+						? `approved by the Quartermaster${resolution.userConfirmed ? ` (user confirmed: ${resolution.userConfirmed})` : ""}`
+						: `denied by the Quartermaster${resolution.userConfirmed ? ` (user: ${resolution.userConfirmed})` : ""}`;
+					resolve({ approve: resolution.approve, note });
+					return;
+				}
+				if (Date.now() - started > 11 * 60 * 1000) {
+					clearInterval(poll);
+					resolve({ approve: false, note: "unresolved" });
+				}
+			}, 1000);
+		});
+	}
+
 	/** The channels a member may send through, and those that may deliver to it. */
 	private channelsForMember(memberName: string): { outbound: OpenChannel[]; inbound: OpenChannel[] } {
 		const outbound: OpenChannel[] = [];
@@ -417,7 +450,7 @@ export class Fleet {
 			teamId: this.teamId,
 			members,
 			openMailboxes: [...this.channels.values()].map((c) => `${c.name} (${c.from} -> ${c.to})`),
-			pendingAsks: 0,
+			pendingAsks: this.recordPath ? pendingAsks(this.recordPath).length : 0,
 			unreadReports: this.recordPath ? readReports(this.recordPath).length : 0,
 			warnings: extraWarnings,
 		};

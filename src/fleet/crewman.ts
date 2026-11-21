@@ -13,6 +13,19 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { appendChannel, appendReport } from "./record.ts";
 
+export interface CrewHooks {
+	/**
+	 * Validate and route a mailbox send. A string refusal is returned to the
+	 * sender verbatim; a receipt confirms the send and its tracking number.
+	 */
+	onSend: (mailbox: string, body: string) => string | SendReceipt;
+	/**
+	 * Register a permission ask and await its resolution. Resolves to a
+	 * verdict; a rejected promise is a failed ask, not a denial.
+	 */
+	onAsk: (tool: string, args: string, why: string) => Promise<{ approve: boolean; note: string }>;
+}
+
 export interface ReportEntry {
 	/**
 	 * Tracking number, sequential per team record: r1, r2, ... The
@@ -81,6 +94,40 @@ export function crewmanTools(memberName: string, recordPath: string, hooks: Crew
 			},
 		},
 		{
+			name: "request_permission",
+			label: "Request permission",
+			description:
+				"Ask the Quartermaster's approval before a sensitive action. The Quartermaster " +
+				"decides by policy: read-only and test commands it may approve itself; destructive " +
+				"or credential-touching actions always require the user. Approval records consent " +
+				"- it does not add tools to your session. If the tool itself is not granted to you, " +
+				"say so in your report and the Quartermaster may run it on your behalf. " +
+				"You wait here until it resolves - do not attempt the action before it answers.",
+			promptSnippet: "Ask the Quartermaster before any action outside your granted tools.",
+			parameters: Type.Object({
+				tool: Type.String({ description: 'The tool you need, e.g. "bash".' }),
+				args: Type.String({ description: "The exact arguments you would run." }),
+				why: Type.String({ description: "Why this task needs it." }),
+			}),
+			async execute(
+				_toolCallId: string,
+				params: { tool: string; args: string; why: string },
+				signal: AbortSignal | undefined,
+			) {
+				const verdict = await withTimeout(
+					hooks.onAsk(params.tool, params.args, params.why),
+					10 * 60 * 1000,
+					{ approve: false, note: "the ask timed out unresolved — treat as denied" },
+					signal,
+				);
+				return {
+					content: [{ type: "text", text: verdict.approve ? `Approved: ${verdict.note}` : `Denied: ${verdict.note}` }],
+					isError: !verdict.approve,
+					details: { tool: params.tool, args: params.args },
+				};
+			},
+		},
+		{
 			name: "send",
 			label: "Send via mailbox",
 			description:
@@ -119,4 +166,33 @@ export function crewmanTools(memberName: string, recordPath: string, hooks: Crew
 			},
 		},
 	];
+}
+
+/** Race a promise against a timeout, honoring an abort signal. */
+async function withTimeout(
+	promise: Promise<{ approve: boolean; note: string }>,
+	ms: number,
+	fallback: { approve: boolean; note: string },
+	signal?: AbortSignal,
+): Promise<{ approve: boolean; note: string }> {
+	return new Promise((resolve) => {
+		const timer = setTimeout(() => resolve(fallback), ms);
+		const onAbort = () => {
+			clearTimeout(timer);
+			resolve({ approve: false, note: "aborted" });
+		};
+		signal?.addEventListener("abort", onAbort, { once: true });
+		promise.then(
+			(value) => {
+				clearTimeout(timer);
+				signal?.removeEventListener("abort", onAbort);
+				resolve(value);
+			},
+			(err: unknown) => {
+				clearTimeout(timer);
+				signal?.removeEventListener("abort", onAbort);
+				resolve({ approve: false, note: `ask failed: ${String(err)}` });
+			},
+		);
+	});
 }

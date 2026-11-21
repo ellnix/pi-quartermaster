@@ -1,0 +1,228 @@
+/**
+ * Quartermaster extension entry.
+ *
+ * The quartermaster is the user's main interactive pi session. This extension
+ * registers the tool surface it uses to convene, observe, equip, and govern a
+ * team of sub-agents. Every tool delegates to a QuartermasterEngine; the
+ * scaffold ships NotConfiguredEngine, and the composed engine takes over as
+ * the config, matcher, and fleet modules land.
+ *
+ * When the fleet spawns child sessions in this process, this same extension
+ * file is loaded inside them (the child's resource discovery sees user
+ * settings). The guard below makes it inert there: children get the crewman
+ * tools passed as custom tools instead, never the quartermaster surface.
+ */
+
+import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import {
+	NotConfiguredEngine,
+	type Ack,
+	type ConveneInput,
+	type PendingAsk,
+	type QuartermasterEngine,
+	type ReadChannelInput,
+	type ReadChannelResult,
+	type ResolveAskInput,
+	type SetCostInput,
+	type SetOverrideInput,
+	type RateInput,
+	type TeamStatus,
+} from "./engine.ts";
+
+/** Set by the fleet around child session creation; see the header comment. */
+const CHILD_MARKER = "QM_CHILD";
+
+function text(body: string): { content: { type: "text"; text: string }[]; details: unknown } {
+	return { content: [{ type: "text", text: body }], details: {} };
+}
+
+function ackText(ack: Ack): { content: { type: "text"; text: string }[]; details: unknown } {
+	const body = ack.ok ? ack.message : `${ack.message}${ack.warnings?.length ? `\nwarnings: ${ack.warnings.join("; ")}` : ""}`;
+	return text(body);
+}
+
+function teamText(status: TeamStatus): { content: { type: "text"; text: string }[]; details: unknown } {
+	const lines: string[] = [];
+	if (!status.convened) {
+		lines.push("No team is convened.");
+	} else {
+		lines.push(`Team ${status.teamId ?? "?"} — ${status.members.length} member(s).`);
+		for (const m of status.members) {
+			lines.push(`- ${m.name} [${m.state}] ${m.model ? `on ${m.model}` : "(no model drawn)"} — ${m.description}${m.note ? ` (${m.note})` : ""}`);
+		}
+		if (status.openMailboxes.length) {
+			lines.push(`Open mailboxes: ${status.openMailboxes.join(", ")}`);
+		}
+		if (status.pendingAsks > 0) {
+			lines.push(`${status.pendingAsks} pending permission ask(s) — resolve with resolve_ask.`);
+		}
+		if (status.unreadReports > 0) {
+			lines.push(`${status.unreadReports} unread report(s) — read_channel "reports".`);
+		}
+	}
+	for (const w of status.warnings) {
+		lines.push(`warning: ${w}`);
+	}
+	return text(lines.join("\n"));
+}
+
+function asksText(asks: PendingAsk[]): { content: { type: "text"; text: string }[]; details: unknown } {
+	if (!asks.length) return text("No pending asks.");
+	return text(asks.map((a) => `- [${a.id}] ${a.member} asks to run ${a.tool} ${a.args}`).join("\n"));
+}
+
+function channelText(result: ReadChannelResult): { content: { type: "text"; text: string }[]; details: unknown } {
+	const lines = result.messages.map(
+		(m) => `${new Date(m.ts).toISOString()} ${m.from} -> ${m.to}: ${m.body}`,
+	);
+	for (const w of result.warnings) lines.push(`warning: ${w}`);
+	return text(lines.length ? lines.join("\n") : `No traffic on ${result.channel}.`);
+}
+
+export default function quartermaster(pi: ExtensionAPI): void {
+	// Child sessions created by the fleet load this extension too. Stay inert:
+	// the crewman tools are passed to them as custom tools, and a quartermaster
+	// surface inside a child would let it convene sub-teams of its own.
+	if (process.env[CHILD_MARKER]) return;
+
+	// Replaced by the composed engine when the config, matcher, and fleet
+	// modules land. The tool surface above is final and never changes shape.
+	const engine: QuartermasterEngine = new NotConfiguredEngine();
+
+	pi.registerTool({
+		name: "convene_team",
+		label: "Convene team",
+		description:
+			"Convene a team of persistent sub-agents. Each member runs as a child session " +
+			"with a model drawn once from its spec (temperature-bounded, filtered by auth, " +
+			"capability, and cost). Define the relationship graph up front: list the mailboxes " +
+			"to open between members. Member tasks must be complete and self-contained — the " +
+			"member never sees this conversation.",
+		promptSnippet: "Convene a team of sub-agents for parallel or multi-role work.",
+		promptGuidelines: [
+			"Convene defines the relationship graph up front; open a mailbox mid-flight only as a recorded decision.",
+			"Member tasks must be self-contained: the member never sees the quartermaster's conversation.",
+		],
+		parameters: Type.Object({
+			members: Type.Array(
+				Type.Object({
+					agent: Type.String({ description: "Agent definition name (from ~/.agents/agents/ or .pi/agents/)." }),
+					spec: Type.Optional(Type.String({ description: "Spec name from pools (specs.jsonc). Optional when the agent file pins a model." })),
+					task: Type.String({ description: "The complete, self-contained task for this member." }),
+				}),
+				{ minItems: 1 },
+			),
+			mailboxes: Type.Optional(
+				Type.Array(Type.String({ description: "Mailbox definition names to open between members (from ~/.agents/mailboxes/ or .pi/team/mailboxes/)." })),
+			),
+		}),
+		execute: async (_id, params: ConveneInput) => teamText(await engine.convene(params)),
+	});
+
+	pi.registerTool({
+		name: "team_list",
+		label: "Team list",
+		description:
+			"List the convened team: members, live status, the model each was drawn on, their " +
+			"descriptions and recommended use, pending permission asks, and unread reports.",
+		parameters: Type.Object({}),
+		execute: async () => teamText(await engine.status()),
+	});
+
+	pi.registerTool({
+		name: "read_channel",
+		label: "Read channel",
+		description:
+			"Read logged team traffic on demand. channel is a mailbox name or \"reports\". " +
+			"All traffic is logged; nothing is pushed into your context.",
+		parameters: Type.Object({
+			channel: Type.String({ description: "A mailbox name, or \"reports\"." }),
+			tail: Type.Optional(Type.Number({ description: "How many recent messages to return. Default 20." })),
+		}),
+		execute: async (_id, params: ReadChannelInput) => channelText(await engine.readChannel(params)),
+	});
+
+	pi.registerTool({
+		name: "rate_member",
+		label: "Rate member outcome",
+		description:
+			"Rate a model's outcome on a score dimension at return-time, when your judgment " +
+			"is freshest. outcome is 0 to 1. One bad day moves a model a little; a pattern " +
+			"moves it a lot; down-scored models are still drawn occasionally — that is the " +
+			"recovery path.",
+		promptGuidelines: ["Rate each member at return-time; catch unrated members before dissolving."],
+		parameters: Type.Object({
+			model: Type.String({ description: "Physical model id, e.g. \"anthropic/claude-opus-4-8\"." }),
+			dimension: Type.String({ description: "Score dimension, e.g. \"reviewing-code\"." }),
+			outcome: Type.Number({ minimum: 0, maximum: 1, description: "Outcome quality, 0 to 1." }),
+			note: Type.Optional(Type.String({ description: "Short reason, recorded with the rating." })),
+		}),
+		execute: async (_id, params: RateInput) => ackText(await engine.rate(params)),
+	});
+
+	pi.registerTool({
+		name: "set_cost",
+		label: "Set cost fact",
+		description:
+			"Record a durable cost fact. cost is 0 to 1 (1 = cheapest) and accounts for " +
+			"promotions and plans — e.g. when the user says their new subscription makes a " +
+			"provider 5x cheaper. target \"provider/<id>\" sets every model of that provider.",
+		parameters: Type.Object({
+			target: Type.String({ description: "A model id, or \"provider/<id>\"." }),
+			cost: Type.Number({ minimum: 0, maximum: 1, description: "Cost score, 1 = cheapest." }),
+			reason: Type.Optional(Type.String({ description: "Provenance, recorded with the override." })),
+		}),
+		execute: async (_id, params: SetCostInput) => ackText(await engine.setCost(params)),
+	});
+
+	pi.registerTool({
+		name: "set_override",
+		label: "Set score override",
+		description:
+			"Set a durable score override for a model on a dimension. Overrides beat " +
+			"evidence and every posterior drift — use them for user-directed judgments. " +
+			"The user is the veto layer.",
+		parameters: Type.Object({
+			model: Type.String({ description: "Physical model id." }),
+			dimension: Type.String({ description: "Score dimension." }),
+			value: Type.Number({ minimum: 0, maximum: 1, description: "The override value, 0 to 1." }),
+			reason: Type.Optional(Type.String({ description: "Provenance, recorded with the override." })),
+		}),
+		execute: async (_id, params: SetOverrideInput) => ackText(await engine.setOverride(params)),
+	});
+
+	pi.registerTool({
+		name: "pending_asks",
+		label: "Pending asks",
+		description: "List pending permission asks from team members.",
+		parameters: Type.Object({}),
+		execute: async () => asksText(await engine.pendingAsks()),
+	});
+
+	pi.registerTool({
+		name: "resolve_ask",
+		label: "Resolve ask",
+		description:
+			"Resolve a pending permission ask. Categories listed as escalate-only in " +
+			"authority.jsonc require the user's confirmation, quoted in userConfirmed.",
+		parameters: Type.Object({
+			id: Type.String({ description: "The ask id from pending_asks." }),
+			approve: Type.Boolean({ description: "Whether to allow the request." }),
+			userConfirmed: Type.Optional(
+				Type.String({ description: "Required for escalate-only categories: the user's confirmation, quoted." }),
+			),
+		}),
+		execute: async (_id, params: ResolveAskInput) => ackText(await engine.resolveAsk(params)),
+	});
+
+	pi.registerTool({
+		name: "dissolve_team",
+		label: "Dissolve team",
+		description:
+			"Dissolve the team: collect final reports, dispose the child sessions. The " +
+			"record persists; reconvening draws fresh models with the record as the blackboard.",
+		parameters: Type.Object({}),
+		execute: async () => teamText(await engine.dissolve()),
+	});
+}

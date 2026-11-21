@@ -1,0 +1,30 @@
+{
+  "name": "pi-quartermaster",
+  "version": "0.1.0",
+  "description": "Convene, equip, and govern teams of sub-agents with your main pi session as the quartermaster.",
+  "keywords": ["pi-package"],
+  "license": "MIT",
+  "type": "module",
+  "pi": {
+    "extensions": ["./src/quartermaster.ts"],
+    "skills": []
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "scripts": {
+    "check": "tsc --noEmit"
+  }
+}

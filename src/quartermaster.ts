@@ -110,7 +110,7 @@ export default function quartermaster(pi: ExtensionAPI): void {
 		parameters: Type.Object({
 			members: Type.Array(
 				Type.Object({
-					agent: Type.String({ description: "Agent definition name (from ~/.agents/agents/ or .pi/agents/)." }),
+					agent: Type.String({ description: "Agent definition name (from the agent dir: team/agents/, or the project .pi/agents/)." }),
 					spec: Type.Optional(
 						Type.Object(
 							{
@@ -136,7 +136,7 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			mailboxes: Type.Optional(
 				Type.Array(
 					Type.Object({
-						name: Type.String({ description: "Mailbox definition name (the template supplying the preamble, from ~/.agents/mailboxes/ or .pi/team/mailboxes/)." }),
+						name: Type.String({ description: "Mailbox definition name (the template supplying the preamble, from the agent dir: team/mailboxes/, or the project .pi/team/mailboxes/)." }),
 						from: Type.String({ description: "Sender member." }),
 						to: Type.String({ description: "Recipient member." }),
 					}),

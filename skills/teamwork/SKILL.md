@@ -1,8 +1,10 @@
 ---
 name: teamwork
 description: >-
-  Use this skill when considering delegating work to a team of
-  sub-agents, when a team is convened, when member traffic or permission
+  Use this skill when deciding whether non-trivial work warrants a team
+  of sub-agents — multi-file changes, exploration that would flood your
+  context, reviews needing fresh eyes, or parallelizable spec-complete
+  tasks. Also when a team is convened, when member traffic or permission
   asks arrive, or when the user asks about the team.
 ---
 

@@ -27,9 +27,17 @@ export interface ReportEntry {
 	confidence?: number;
 }
 
+export interface SendReceipt {
+	/** The message's tracking number. */
+	id: string;
+}
+
 export interface CrewHooks {
-	/** Validate and route a mailbox send; returns an error string when refused. */
-	onSend: (mailbox: string, body: string) => string | null;
+	/**
+	 * Validate and route a mailbox send. A string refusal is returned to the
+	 * sender verbatim; a receipt confirms the send and its tracking number.
+	 */
+	onSend: (mailbox: string, body: string) => string | SendReceipt;
 }
 
 export function crewmanTools(memberName: string, recordPath: string, hooks: CrewHooks): ToolDefinition[] {
@@ -77,10 +85,10 @@ export function crewmanTools(memberName: string, recordPath: string, hooks: Crew
 			label: "Send via mailbox",
 			description:
 				"Send a message to another member through one of your open mailboxes. The " +
-				"channel's preamble (with the wired endpoints substituted) is prefixed by the " +
-				"engine, the message is logged for the Quartermaster, and it is delivered when " +
-				"the recipient is idle. Only mailboxes opened for this team whose from-member " +
-				"is you are listed in your task.",
+				"engine frames and logs the delivery, and the Quartermaster sees all traffic. " +
+				"A tracking number is echoed back to you and can be cited when the " +
+				"Quartermaster steers you. Your task lists your channels by name and " +
+				"recipient; anything beyond that about a channel is not your concern.",
 			promptSnippet: "Send messages to other members through your open mailboxes with send.",
 			parameters: Type.Object({
 				mailbox: Type.String({ description: "The mailbox name from your task's channels list." }),
@@ -90,19 +98,23 @@ export function crewmanTools(memberName: string, recordPath: string, hooks: Crew
 				_toolCallId: string,
 				params: { mailbox: string; body: string },
 			) {
-				const refusal = hooks.onSend(params.mailbox, params.body);
-				if (refusal) {
+				const { onSend } = hooks;
+				const result = onSend(params.mailbox, params.body);
+				if (typeof result === "string") {
 					return {
-						content: [{ type: "text", text: refusal }],
+						content: [{ type: "text", text: result }],
 						isError: true,
 						details: {},
 					};
 				}
 				return {
 					content: [
-						{ type: "text", text: `Sent via ${params.mailbox}. The recipient sees it when idle; the Quartermaster sees it always.` },
+						{
+							type: "text",
+							text: `Sent via ${params.mailbox} as ${result.id}: the recipient sees it when idle; the Quartermaster sees it always. ${result.id} can be cited to reference this message.`,
+						},
 					],
-					details: { mailbox: params.mailbox },
+					details: { mailbox: params.mailbox, id: result.id },
 				};
 			},
 		},

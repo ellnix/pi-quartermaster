@@ -30,7 +30,7 @@ import { drawForSpec, type Candidate } from "../matching/matcher.ts";
 import type { EvidenceStore } from "../matching/evidence.ts";
 import type { Overrides } from "../matching/overrides.ts";
 import { recordDir } from "../config/paths.ts";
-import { crewmanTools, type CrewHooks } from "./crewman.ts";
+import { crewmanTools, type CrewHooks, type SendReceipt } from "./crewman.ts";
 import { appendChannel, ensureRecord, readReports } from "./record.ts";
 
 /** Set around child session creation; quartermaster.ts stays inert under it. */
@@ -232,28 +232,24 @@ export class Fleet {
 	 * channel and the direction, log the traffic (the panopticon is real,
 	 * which is what makes its declaration honest), then deliver.
 	 */
-	private routeSend(member: FleetMember, mailboxName: string, body: string): string | null {
+	private routeSend(member: FleetMember, mailboxName: string, body: string): string | SendReceipt {
 		const channel = this.channels.get(mailboxName);
-		if (!channel) {
-			return `mailbox "${mailboxName}" is not open for this team`;
-		}
-		if (channel.from !== member.name) {
-			return `mailbox "${mailboxName}" is not yours to send through (it is wired from ${channel.from})`;
-		}
-		const recipient = this.members.get(channel.to);
-		if (!recipient) {
-			return `member "${channel.to}" is not part of this team`;
+		const recipient = channel ? this.members.get(channel.to) : undefined;
+		// One uniform refusal: never reveal whether the channel exists, how it
+		// is wired, or who it belongs to. Members learn only their own graph.
+		if (!channel || channel.from !== member.name || !recipient || !recipient.session) {
+			return `no mailbox "${mailboxName}" is open for you to send through`;
 		}
 
-		appendChannel(this.recordPath!, mailboxName, {
+		const entry = appendChannel(this.recordPath!, mailboxName, {
 			channel: mailboxName,
 			ts: Date.now(),
 			from: channel.from,
 			to: channel.to,
 			body,
 		});
-		this.deliver(recipient, mailboxName, channel.from, channel.to, body, "followUp");
-		return null;
+		this.deliver(recipient, mailboxName, channel.from, channel.to, body, "followUp", entry.id);
+		return { id: entry.id };
 	}
 
 	/**
@@ -266,15 +262,15 @@ export class Fleet {
 		if (!member) {
 			return { ok: false, message: `no member named "${memberName}" — see team_list` };
 		}
-		appendChannel(this.recordPath!, "quartermaster", {
+		const entry = appendChannel(this.recordPath!, "quartermaster", {
 			channel: "quartermaster",
 			ts: Date.now(),
 			from: "quartermaster",
 			to: memberName,
 			body,
 		});
-		this.deliver(member, "quartermaster", "quartermaster", memberName, body, steer ? "steer" : "followUp");
-		return { ok: true, message: `sent to ${memberName}${steer ? " (steering)" : ""}` };
+		this.deliver(member, "quartermaster", "quartermaster", memberName, body, steer ? "steer" : "followUp", entry.id);
+		return { ok: true, message: `sent to ${memberName} as ${entry.id}${steer ? " (steering)" : ""}` };
 	}
 
 	private deliver(
@@ -284,6 +280,7 @@ export class Fleet {
 		to: string,
 		body: string,
 		behavior: "steer" | "followUp",
+		id?: string,
 	): void {
 		if (!recipient.session) {
 			recipient.note = `undeliverable message for ${recipient.name}: no session`;
@@ -298,7 +295,7 @@ export class Fleet {
 			? template.preamble.replace(/\$\{from\}/g, from).replace(/\$\{to\}/g, to)
 			: undefined;
 		const framing = [
-			`A message arrives via ${channel === "quartermaster" ? "the Quartermaster" : `the ${channel} mailbox`} from ${from}.`,
+			`A message${id ? ` (${id})` : ""} arrives via ${channel === "quartermaster" ? "the Quartermaster" : `the ${channel} mailbox`} from ${from}.`,
 			preamble ? `\n${preamble}\n` : "",
 		].join("\n");
 		const text = `${framing}\n${body}`;
@@ -476,13 +473,13 @@ function assembleSpawnPrompt(
 	if (channels.outbound.length > 0) {
 		lines.push("", "CHANNELS YOU CAN SEND THROUGH (with the send tool):");
 		for (const ch of channels.outbound) {
-			lines.push(`- ${ch.name} (to ${ch.to}): ${ch.template.description}`);
+			lines.push(`- ${ch.name} -> ${ch.to}`);
 		}
 	}
 	if (channels.inbound.length > 0) {
-		lines.push("", "CHANNELS THAT MAY DELIVER TO YOU (their preambles frame what arrives):");
+		lines.push("", "CHANNELS THAT MAY DELIVER TO YOU:");
 		for (const ch of channels.inbound) {
-			lines.push(`- ${ch.name} (from ${ch.from}): ${ch.template.description}`);
+			lines.push(`- ${ch.name} <- ${ch.from}`);
 		}
 	}
 	lines.push("", "YOUR TASK:", task);

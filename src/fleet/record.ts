@@ -56,6 +56,11 @@ export function readReports(recordPath: string, tail?: number): ReportEntry[] {
 }
 
 export interface ChannelEntry {
+	/**
+	 * Tracking number, sequential per channel: m1, m2, ... Both sides and the
+	 * quartermaster can cite a message by reference.
+	 */
+	id: string;
 	/** The channel this traveled on: a mailbox name or "quartermaster". */
 	channel: string;
 	ts: number;
@@ -68,8 +73,11 @@ export function channelFile(recordPath: string, mailbox: string): string {
 	return `${recordPath}/channels/${mailbox}.jsonl`;
 }
 
-export function appendChannel(recordPath: string, mailbox: string, entry: ChannelEntry): void {
-	appendJsonl(channelFile(recordPath, mailbox), entry as unknown as Record<string, unknown>);
+export function appendChannel(recordPath: string, mailbox: string, entry: Omit<ChannelEntry, "id">): ChannelEntry {
+	const existing = readChannelLog(recordPath, mailbox);
+	const numbered: ChannelEntry = { id: `m${existing.length + 1}`, ...entry };
+	appendJsonl(channelFile(recordPath, mailbox), numbered as unknown as Record<string, unknown>);
+	return numbered;
 }
 
 export function readChannelLog(recordPath: string, mailbox: string, tail?: number): ChannelEntry[] {

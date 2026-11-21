@@ -16,10 +16,19 @@ export interface ConveneMemberInput {
 	task: string;
 }
 
+export interface ConveneMailboxInput {
+	/** Mailbox definition name. */
+	name: string;
+	/** Sender member; defaults to the definition's from. */
+	from?: string;
+	/** Recipient member; defaults to the definition's to. */
+	to?: string;
+}
+
 export interface ConveneInput {
 	members: ConveneMemberInput[];
-	/** Mailbox definition names to open between members. */
-	mailboxes?: string[];
+	/** The team's relationship graph: channels to open, with endpoints. */
+	mailboxes?: ConveneMailboxInput[];
 }
 
 export interface MemberStatus {
@@ -28,6 +37,11 @@ export interface MemberStatus {
 	description: string;
 	spec?: string;
 	model?: string;
+	/**
+	 * A union of string literals rather than an enum: the TypeScript
+	 * idiom. It is compile-time-checked everywhere the value is read or
+	 * written, serializes as plain strings, and adds no runtime object.
+	 */
 	state: "convening" | "working" | "idle" | "dissolved" | "error";
 	note?: string;
 }
@@ -43,6 +57,8 @@ export interface TeamStatus {
 }
 
 export interface ChannelMessage {
+	/** The channel this traveled on: a mailbox name, "reports", or "quartermaster". */
+	channel: string;
 	ts: number;
 	from: string;
 	to: string;
@@ -63,13 +79,18 @@ export interface ReadChannelResult {
 }
 
 export interface RateInput {
-	/** Physical model id, e.g. "anthropic/claude-opus-4-8". */
-	model: string;
-	/** Score dimension, e.g. "reviewing-code". */
-	dimension: string;
+	/** Team member name; the spec it was convened under says what its model was drawn for. */
+	member: string;
 	/** Outcome quality, 0 to 1. */
 	outcome: number;
 	note?: string;
+}
+
+export interface MessageInput {
+	/** Team member name. */
+	member: string;
+	/** Message body. */
+	body: string;
 }
 
 export interface SetCostInput {
@@ -116,6 +137,7 @@ export interface QuartermasterEngine {
 	status(): Promise<TeamStatus>;
 	readChannel(input: ReadChannelInput): Promise<ReadChannelResult>;
 	rate(input: RateInput): Promise<Ack>;
+	message(input: MessageInput): Promise<Ack>;
 	setCost(input: SetCostInput): Promise<Ack>;
 	setOverride(input: SetOverrideInput): Promise<Ack>;
 	pendingAsks(): Promise<PendingAsk[]>;
@@ -148,7 +170,11 @@ export class NotConfiguredEngine implements QuartermasterEngine {
 	}
 
 	async rate(input: RateInput): Promise<Ack> {
-		return this.ack(`rating is accepted by the engine once it exists: ${input.model} / ${input.dimension} = ${input.outcome}`);
+		return this.ack(`rating arrives with the fleet: rate members once a team is convened (${input.member} = ${input.outcome})`);
+	}
+
+	async message(input: MessageInput): Promise<Ack> {
+		return this.ack(`messaging arrives with the fleet: no member named ${input.member} until a team convenes`);
 	}
 
 	async setCost(input: SetCostInput): Promise<Ack> {

@@ -19,6 +19,7 @@ import {
 	NotConfiguredEngine,
 	type Ack,
 	type ConveneInput,
+	type MessageInput,
 	type PendingAsk,
 	type QuartermasterEngine,
 	type ReadChannelInput,
@@ -96,25 +97,34 @@ export default function quartermaster(pi: ExtensionAPI): void {
 		description:
 			"Convene a team of persistent sub-agents. Each member runs as a child session " +
 			"with a model drawn once from its spec (temperature-bounded, filtered by auth, " +
-			"capability, and cost). Define the relationship graph up front: list the mailboxes " +
-			"to open between members. Member tasks must be complete and self-contained — the " +
-			"member never sees this conversation.",
+			"capability, and cost). Agents usually carry their spec in their definition file; " +
+			"the per-member spec here overrides it for this deployment. Members are persistent: " +
+			"the task is the initial instruction, and you can guide a member step by step " +
+			"afterwards with message_member. Define the relationship graph up front: declare " +
+			"every mailbox to open, with its endpoints.",
 		promptSnippet: "Convene a team of sub-agents for parallel or multi-role work.",
 		promptGuidelines: [
 			"Convene defines the relationship graph up front; open a mailbox mid-flight only as a recorded decision.",
-			"Member tasks must be self-contained: the member never sees the quartermaster's conversation.",
+			"Members never see your conversation: give each task enough to start, then guide with message_member.",
 		],
 		parameters: Type.Object({
 			members: Type.Array(
 				Type.Object({
 					agent: Type.String({ description: "Agent definition name (from ~/.agents/agents/ or .pi/agents/)." }),
-					spec: Type.Optional(Type.String({ description: "Spec name from pools (specs.jsonc). Optional when the agent file pins a model." })),
-					task: Type.String({ description: "The complete, self-contained task for this member." }),
+					spec: Type.Optional(Type.String({ description: "Spec name (specs.jsonc). Overrides the agent file's spec for this deployment." })),
+					task: Type.String({ description: "The initial task for this member. Self-contained enough to start from." }),
 				}),
 				{ minItems: 1 },
 			),
 			mailboxes: Type.Optional(
-				Type.Array(Type.String({ description: "Mailbox definition names to open between members (from ~/.agents/mailboxes/ or .pi/team/mailboxes/)." })),
+				Type.Array(
+					Type.Object({
+						name: Type.String({ description: "Mailbox definition name (from ~/.agents/mailboxes/ or .pi/team/mailboxes/)." }),
+						from: Type.Optional(Type.String({ description: "Sender member. Defaults to the definition's from." })),
+						to: Type.Optional(Type.String({ description: "Recipient member. Defaults to the definition's to." })),
+					}),
+					{ description: "The team's relationship graph: which channels open between which members." },
+				),
 			),
 		}),
 		execute: async (_id, params: ConveneInput) => teamText(await engine.convene(params)),
@@ -135,7 +145,9 @@ export default function quartermaster(pi: ExtensionAPI): void {
 		label: "Read channel",
 		description:
 			"Read logged team traffic on demand. channel is a mailbox name or \"reports\". " +
-			"All traffic is logged; nothing is pushed into your context.",
+			"All traffic is logged; nothing is pushed into your context. The logs are plain " +
+			"JSONL files under the team record (team_list shows the path): read them with " +
+			"your own tools and run any analysis you like.",
 		parameters: Type.Object({
 			channel: Type.String({ description: "A mailbox name, or \"reports\"." }),
 			tail: Type.Optional(Type.Number({ description: "How many recent messages to return. Default 20." })),
@@ -147,14 +159,16 @@ export default function quartermaster(pi: ExtensionAPI): void {
 		name: "rate_member",
 		label: "Rate member outcome",
 		description:
-			"Rate a model's outcome on a score dimension at return-time, when your judgment " +
-			"is freshest. outcome is 0 to 1. One bad day moves a model a little; a pattern " +
-			"moves it a lot; down-scored models are still drawn occasionally — that is the " +
-			"recovery path.",
-		promptGuidelines: ["Rate each member at return-time; catch unrated members before dissolving."],
+			"Rate a member's outcome at return-time, when your judgment is freshest. " +
+			"outcome is 0 to 1 — a bad review means the member's model was bad at what " +
+			"the member was convened to do. You never track models or dimensions: the " +
+			"member's spec says what its model was drawn for, and the evidence updates " +
+			"the drawn model on those dimensions. One bad day moves a model a little; a " +
+			"pattern moves it a lot; down-scored models still draw occasionally — that " +
+			"is the recovery path.",
+		promptGuidelines: ["Rate each member at return-time; rate every member before dissolving."],
 		parameters: Type.Object({
-			model: Type.String({ description: "Physical model id, e.g. \"anthropic/claude-opus-4-8\"." }),
-			dimension: Type.String({ description: "Score dimension, e.g. \"reviewing-code\"." }),
+			member: Type.String({ description: "Team member name (from team_list)." }),
 			outcome: Type.Number({ minimum: 0, maximum: 1, description: "Outcome quality, 0 to 1." }),
 			note: Type.Optional(Type.String({ description: "Short reason, recorded with the rating." })),
 		}),
@@ -217,11 +231,30 @@ export default function quartermaster(pi: ExtensionAPI): void {
 	});
 
 	pi.registerTool({
+		name: "message_member",
+		label: "Message member",
+		description:
+			"Send a message to one member of the convened team. The member receives it " +
+			"when idle (messages queue while it works), with the engine's constitutional " +
+			"framing prefixed — your body is the only thing you wrote. All messages are " +
+			"logged to the record like mailbox traffic. Members are persistent: use this " +
+			"to guide step by step, relay results of approved actions, or steer a task " +
+			"mid-flight.",
+		parameters: Type.Object({
+			member: Type.String({ description: "Team member name (from team_list)." }),
+			body: Type.String({ description: "The message body." }),
+		}),
+		execute: async (_id, params: MessageInput) => ackText(await engine.message(params)),
+	});
+
+	pi.registerTool({
 		name: "dissolve_team",
 		label: "Dissolve team",
 		description:
-			"Dissolve the team: collect final reports, dispose the child sessions. The " +
-			"record persists; reconvening draws fresh models with the record as the blackboard.",
+			"Dissolve the team: collect final reports, dispose the child sessions. Best " +
+			"practice: rate every member first (rate_member) — a dissolution without " +
+			"ratings wastes the session's evidence. The record persists; reconvening " +
+			"draws fresh models with the record as the blackboard.",
 		parameters: Type.Object({}),
 		execute: async () => teamText(await engine.dissolve()),
 	});

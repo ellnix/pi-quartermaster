@@ -7,22 +7,60 @@
  * not-configured state so the surface is callable from the first commit.
  */
 
+/**
+ * A spec built on the fly by the quartermaster. The persistent form —
+ * what an agent file references — lives in the config module's specs;
+ * this inline form exists so an override never has to be named and
+ * saved just to be used once.
+ */
+export interface SpecOverrideInput {
+	/** Dimension weights; suitability = dot product with a model's scores. */
+	weights: Record<string, number>;
+	/** Softmax temperature, 0 (deterministic) to 5 (maximum chaos). */
+	temperature?: number;
+	filters?: {
+		/** Input modalities a candidate must support: "text", "image". */
+		require?: string[];
+		/** Minimum cost score of a candidate (0-1, 1 = cheapest). */
+		minCostScore?: number;
+		/** Let unrated models (no scores anywhere) into the pool. */
+		allowUnrated?: boolean;
+	};
+}
+
 export interface ConveneMemberInput {
 	/** Agent definition name (the `name` in an agent .md file). */
 	agent: string;
-	/** Spec name (pools.jsonc). Optional when the agent file pins a model. */
-	spec?: string;
+	/**
+	 * Overrides the agent's spec for this deployment, built on the fly.
+	 * Reusable specs are attached to agent definitions; an override that
+	 * must be named is a spec that belongs in a file, not here.
+	 */
+	spec?: SpecOverrideInput;
 	/** The complete, self-contained task for this member. */
 	task: string;
 }
 
+/**
+ * One channel in the team's channel repository. This wiring is the
+ * single authority for from and to: mailbox definitions are preamble
+ * templates and carry no endpoints, and every other structure resolves
+ * them through this repository rather than carrying its own copy.
+ *
+ * Because a template can be wired to any pair of members, a preamble
+ * written in role terms ("FROM THE BUILDER WHOSE CODE YOU ARE
+ * REVIEWING") would lie under different wiring. Templates may
+ * therefore reference ${from} and ${to}; the engine substitutes the
+ * wired endpoints into the preamble at delivery. A preamble without
+ * placeholders is used verbatim and should be written generically.
+ */
 export interface ConveneMailboxInput {
-	/** Mailbox definition name. */
+	/** Mailbox definition name (the template supplying the preamble). */
 	name: string;
-	/** Sender member; defaults to the definition's from. */
-	from?: string;
-	/** Recipient member; defaults to the definition's to. */
-	to?: string;
+	/** Sender member. */
+	from: string;
+	/** Recipient member. */
+	to: string;
 }
 
 export interface ConveneInput {
@@ -60,8 +98,6 @@ export interface ChannelMessage {
 	/** The channel this traveled on: a mailbox name, "reports", or "quartermaster". */
 	channel: string;
 	ts: number;
-	from: string;
-	to: string;
 	body: string;
 }
 

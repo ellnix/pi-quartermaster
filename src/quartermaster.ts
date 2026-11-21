@@ -75,7 +75,7 @@ function asksText(asks: PendingAsk[]): { content: { type: "text"; text: string }
 
 function channelText(result: ReadChannelResult): { content: { type: "text"; text: string }[]; details: unknown } {
 	const lines = result.messages.map(
-		(m) => `${new Date(m.ts).toISOString()} ${m.from} -> ${m.to}: ${m.body}`,
+		(m) => `[${m.channel}] ${new Date(m.ts).toISOString()}: ${m.body}`,
 	);
 	for (const w of result.warnings) lines.push(`warning: ${w}`);
 	return text(lines.length ? lines.join("\n") : `No traffic on ${result.channel}.`);
@@ -97,11 +97,11 @@ export default function quartermaster(pi: ExtensionAPI): void {
 		description:
 			"Convene a team of persistent sub-agents. Each member runs as a child session " +
 			"with a model drawn once from its spec (temperature-bounded, filtered by auth, " +
-			"capability, and cost). Agents usually carry their spec in their definition file; " +
-			"the per-member spec here overrides it for this deployment. Members are persistent: " +
-			"the task is the initial instruction, and you can guide a member step by step " +
-			"afterwards with message_member. Define the relationship graph up front: declare " +
-			"every mailbox to open, with its endpoints.",
+			"capability, and cost). Agents carry their reusable specs; an override here is " +
+			"built on the fly, not named. Members are persistent: the task is the initial " +
+			"instruction, and you can guide a member step by step afterwards with " +
+			"message_member. Declare the channel repository up front: every channel to open, " +
+			"with its endpoints - this wiring is the single authority for who talks to whom.",
 		promptSnippet: "Convene a team of sub-agents for parallel or multi-role work.",
 		promptGuidelines: [
 			"Convene defines the relationship graph up front; open a mailbox mid-flight only as a recorded decision.",
@@ -111,7 +111,24 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			members: Type.Array(
 				Type.Object({
 					agent: Type.String({ description: "Agent definition name (from ~/.agents/agents/ or .pi/agents/)." }),
-					spec: Type.Optional(Type.String({ description: "Spec name (specs.jsonc). Overrides the agent file's spec for this deployment." })),
+					spec: Type.Optional(
+						Type.Object(
+							{
+								weights: Type.Record(Type.String(), Type.Number(), {
+									description: "Dimension weights; suitability = dot product with a model's scores.",
+								}),
+								temperature: Type.Optional(Type.Number({ minimum: 0, maximum: 5, description: "Softmax temperature, 0 (deterministic) to 5." })),
+								filters: Type.Optional(
+									Type.Object({
+										require: Type.Optional(Type.Array(Type.String(), { description: "Input modalities a candidate must support." })),
+										minCostScore: Type.Optional(Type.Number({ minimum: 0, maximum: 1, description: "Minimum cost score (1 = cheapest)." })),
+										allowUnrated: Type.Optional(Type.Boolean({ description: "Let unrated models into the pool." })),
+									}),
+								),
+							},
+							{ description: "A spec built on the fly, overriding the agent's own for this deployment." },
+						),
+					),
 					task: Type.String({ description: "The initial task for this member. Self-contained enough to start from." }),
 				}),
 				{ minItems: 1 },
@@ -119,11 +136,11 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			mailboxes: Type.Optional(
 				Type.Array(
 					Type.Object({
-						name: Type.String({ description: "Mailbox definition name (from ~/.agents/mailboxes/ or .pi/team/mailboxes/)." }),
-						from: Type.Optional(Type.String({ description: "Sender member. Defaults to the definition's from." })),
-						to: Type.Optional(Type.String({ description: "Recipient member. Defaults to the definition's to." })),
+						name: Type.String({ description: "Mailbox definition name (the template supplying the preamble, from ~/.agents/mailboxes/ or .pi/team/mailboxes/)." }),
+						from: Type.String({ description: "Sender member." }),
+						to: Type.String({ description: "Recipient member." }),
 					}),
-					{ description: "The team's relationship graph: which channels open between which members." },
+					{ description: "The channel repository - the single authority for who talks to whom. Mailbox definitions are preamble templates and carry no endpoints." },
 				),
 			),
 		}),
@@ -145,9 +162,10 @@ export default function quartermaster(pi: ExtensionAPI): void {
 		label: "Read channel",
 		description:
 			"Read logged team traffic on demand. channel is a mailbox name or \"reports\". " +
-			"All traffic is logged; nothing is pushed into your context. The logs are plain " +
-			"JSONL files under the team record (team_list shows the path): read them with " +
-			"your own tools and run any analysis you like.",
+			"All traffic is logged; nothing is pushed into your context. The logs are " +
+			"newline-delimited JSON (JSONL - the same thing ndjson names) under the team " +
+			"record (team_list shows the path): read them with your own tools and run " +
+			"any analysis you like.",
 		parameters: Type.Object({
 			channel: Type.String({ description: "A mailbox name, or \"reports\"." }),
 			tail: Type.Optional(Type.Number({ description: "How many recent messages to return. Default 20." })),
@@ -234,15 +252,18 @@ export default function quartermaster(pi: ExtensionAPI): void {
 		name: "message_member",
 		label: "Message member",
 		description:
-			"Send a message to one member of the convened team. The member receives it " +
-			"when idle (messages queue while it works), with the engine's constitutional " +
-			"framing prefixed — your body is the only thing you wrote. All messages are " +
-			"logged to the record like mailbox traffic. Members are persistent: use this " +
-			"to guide step by step, relay results of approved actions, or steer a task " +
-			"mid-flight.",
+			"Send a message to one member of the convened team, with the engine's " +
+			"constitutional framing prefixed — your body is the only thing you wrote. " +
+			"The member does not have to be idle to receive it: pi can steer a running " +
+			"agent between its inputs. Set steer to interrupt the current run and steer " +
+			"it with your message; leave it false and the message queues as a follow-up " +
+			"for when the run finishes. All messages are logged to the record like " +
+			"mailbox traffic. Members are persistent: use this to guide step by step, " +
+			"relay results of approved actions, or correct course mid-flight.",
 		parameters: Type.Object({
 			member: Type.String({ description: "Team member name (from team_list)." }),
 			body: Type.String({ description: "The message body." }),
+			steer: Type.Optional(Type.Boolean({ description: "True: interrupt the member's current run and steer it. False (default): queue as a follow-up." })),
 		}),
 		execute: async (_id, params: MessageInput) => ackText(await engine.message(params)),
 	});

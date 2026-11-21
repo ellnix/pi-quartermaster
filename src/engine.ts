@@ -188,11 +188,11 @@ export interface QuartermasterEngine {
  */
 export class NotConfiguredEngine implements QuartermasterEngine {
 	async convene(): Promise<TeamStatus> {
-		return this.team("convening waits on agent definitions in ~/.agents/agents/ (or .pi/agents/)");
+		return this.team("convening waits on agent definitions in the agent dir (team/agents/) or the project .pi/agents/");
 	}
 
 	async status(): Promise<TeamStatus> {
-		return this.team("no team is convened; agent definitions load from ~/.agents/agents/ (or .pi/agents/)");
+		return this.team("no team is convened; agent definitions load from the agent dir (team/agents/) or the project .pi/agents/");
 	}
 
 	async readChannel(input: ReadChannelInput): Promise<ReadChannelResult> {

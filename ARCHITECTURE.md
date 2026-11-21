@@ -106,7 +106,10 @@ name: reviewer
 description: Reviews a changeset against the repo's review skill. Use
   before requesting merge on non-trivial work.
 tools: read, grep, bash
-spec: review/frontier        # or review/basic
+spec:
+  weights: { reviewing-code: 1.0 }
+  temperature: 0.7
+  filters: { require: [text], minCostScore: 0.3 }
 ---
 You are a code reviewer. Load the repo's code-review skill and follow it.
 Sort findings by severity; be specific; report to the quartermaster.

@@ -2,6 +2,29 @@
 
 ## [0.1.0]
 ### Added
-- Engine scaffold: the full quartermaster tool surface is registered and callable,
-  reporting informative not-configured states. Behavior lands with the fleet,
-  mailboxes, and matcher modules.
+- Engine scaffold: the full quartermaster tool surface, inert until configured.
+- Configuration model and discovery, consolidated under pi's agent
+  directory (relocated wholesale by PI_CODING_AGENT_DIR): agents and
+  mailbox templates as markdown, models.yaml, authority.jsonc —
+  validated with loud warnings, never throws on one bad file. No specs
+  file: specs are inline in agent frontmatter or built on the fly.
+- Matcher and evidence store: filter then softmax draw, Thompson
+  posteriors from outcome-shaped ratings, machine-owned overrides.yaml
+  for durable facts with provenance, unrated models excluded unless a
+  spec scouts them.
+- Fleet lifecycle: in-process child sessions through the pi SDK, one
+  model drawn per convening, constitutional introduction assembled in
+  code, the record as blackboard.
+- Mailboxes and reports: preamble templates without endpoints — the
+  convene wiring is the single authority, with ${from}/${to}
+  substitution at delivery — busy-recipient queues, JSONL traffic
+  logs, message_member with mid-run steering, tracking numbers on
+  reports (r1, r2, ...) and messages (m1, m2, ...), everything
+  readable on demand.
+- Permissions: pre-approved tools, ask-the-quartermaster with a
+  file-mediated wait, escalate-only categories that demand the user's
+  confirmation, unresolved asks time out denied.
+- Skills: team-setup (first-run configuration by interview) and
+  teamwork (the quartermaster's standing orders, rate at return-time).
+- refresh-scores.cjs: suggested cost priors from public catalog data;
+  never writes your files.

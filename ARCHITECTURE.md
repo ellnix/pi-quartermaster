@@ -10,8 +10,13 @@ may talk to whom, and under what relationship. It does not command tactics
 The name is the design: a quartermaster equips troops and watches the
 supply lines, but does not tell the reviewer how to review.
 
-**Status:** design-complete, implementation pending. This document is the
-implementation spec.
+**Status:** implemented (v0.1.0) — fleet, mailboxes, permissions,
+matcher, evidence, and the two skills, built in the PR stack from
+issues #1-#8. This document remains the design rationale; the README
+carries day-to-day usage. Shaped by its review rounds: member-based rating, the channel
+repository (convene wiring as the single authority for endpoints,
+templates with ${from}/${to} substitution), message_member steering,
+and tracking numbers on reports and messages.
 
 ---
 
@@ -84,7 +89,7 @@ no per-repo setup, no repo footprint.
 
 | Layer | Location | Content | Owner |
 |---|---|---|---|
-| User | `~/.agents/agents/*.md`, `~/.agents/mailboxes/*.md`, `~/.pi/agent/team/` (specs, models.yaml, evidence) | the team, the channels, the priors, the costs | the user + their installing agent |
+| User | pi's agent dir (`getAgentDir()/team/`): `agents/*.md`, `mailboxes/*.md`, `models.yaml`, `authority.jsonc`, evidence, overrides, records | the team, the channels, the priors, the costs — one home, relocated wholesale by `PI_CODING_AGENT_DIR` | the user + their installing agent |
 | Project (optional) | `.pi/agents/`, `.pi/team/` | repo-specific agent and spec overrides | the repo; may stay empty forever |
 | Machine | evidence store, cost overrides | per-account reality (promotions are per-developer; effective costs cannot be shared) | each machine |
 
@@ -97,8 +102,8 @@ The package itself carries none of this.
 ### Agents
 
 Markdown files, frontmatter + body-as-system-prompt, discovered from
-`~/.agents/agents/` (user) and `.pi/agents/` (project, nearest
-ancestor):
+the agent dir (`team/agents/`, relocated by `PI_CODING_AGENT_DIR`)
+and `.pi/agents/` (project, nearest ancestor):
 
 ```markdown
 ---
@@ -115,35 +120,37 @@ You are a code reviewer. Load the repo's code-review skill and follow it.
 Sort findings by severity; be specific; report to the quartermaster.
 ```
 
-`tools` is the pre-approved surface (see Permissions). `spec` names a
-model policy; the same agent under two specs is how "reviewer-basic" and
-"reviewer-frontier" exist — one prompt, two equipment levels.
+`tools` is the pre-approved surface (see Permissions). The spec is
+inline in the frontmatter — there is no specs file: reusable specs
+live in agent definitions, and the quartermaster builds an override on
+the fly at convene when a deployment genuinely differs.
 
 ### Specs
 
-The quartermaster requests equipment; specs say what that means. A spec
-is a weight vector over score dimensions plus selection knobs:
+The quartermaster requests equipment; a spec says what that means: a
+weight vector over score dimensions plus selection knobs. **There is no
+specs file** — reusable specs are attached to agent definitions (the
+frontmatter above), and an override at convene is built on the fly:
 
 ```jsonc
-// ~/.pi/agent/team/specs.jsonc
-"review/frontier": {
+// inline at convene, or in an agent's frontmatter
+{
   "weights": { "reviewing-code": 1.0 },
   "temperature": 0.7,
   "filters": { "minCostScore": 0.3, "require": ["text"] }
 }
-"review/basic": {
-  "weights": { "reviewing-code": 0.6, "cost": 0.4 },
-  "temperature": 0.4
-}
 ```
 
-- Suitability of model *i* = dot product of spec weights and the model's
-  score vector.
+- Suitability of model *i* = dot product of spec weights and the
+  model's score vector.
 - Selection = softmax over suitability at the spec's temperature —
   bounded chaos. τ near zero for paths where diversity is not worth the
   error rate (security review); τ high for insight-hunting roles.
-- Hard filters (capability, cost floor — cost is 0-1 with 1 = cheapest, so a floor is a minimum — and auth) are crossed by nothing.
-- A spec weighting a dimension no model declares warns at load.
+- Hard filters (capability, cost floor — cost is 0-1 with 1 = cheapest,
+  so a floor is a minimum — and auth) are crossed by nothing.
+- A spec weighting a dimension no candidate declares is reported when
+  the draw runs.
+
 
 ### Mailboxes
 
@@ -152,19 +159,17 @@ direction is a wholly separate file, because the relationships are
 unrelated — the builder asks, the reviewer dictates.
 
 ```markdown
-# ~/.agents/mailboxes/builder-to-reviewer.md
+# team/mailboxes/builder-to-reviewer.md
 ---
-from: builder
-to: reviewer
+name: builder-to-reviewer
 description: Use when the builder needs clarification mid-review — the
   scope of a finding, intent behind a change, context the diff omits.
   Not for relitigating findings.
 ---
-THIS IS A MESSAGE FROM THE BUILDER WHOSE CODE YOU ARE REVIEWING. BE
-ACCOMMODATING WHEN THEY ASK FOR ADDITIONAL DETAILS AND CLARIFICATIONS,
-BUT DO NOT COMPROMISE THE INTEGRITY OF YOUR REVIEW. REMEMBER THE NATURE
-OF YOUR RELATIONSHIP IS ADVERSARIAL. THE QUARTERMASTER OBSERVES ALL
-TRAFFIC ON THIS CHANNEL.
+THIS IS A MESSAGE FROM ${from}. BE ACCOMMODATING WHEN THEY ASK FOR
+ADDITIONAL DETAILS AND CLARIFICATIONS, BUT DO NOT COMPROMISE THE
+INTEGRITY OF YOUR REVIEW. REMEMBER THE NATURE OF YOUR RELATIONSHIP IS
+ADVERSARIAL. THE QUARTERMASTER OBSERVES ALL TRAFFIC ON THIS CHANNEL.
 ```
 
 The preamble is constitutional text: relationship framing that cannot

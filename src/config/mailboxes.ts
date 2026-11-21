@@ -14,10 +14,15 @@ import type { DiscoveryWarning } from "./agents.ts";
 
 export interface MailboxDef {
 	name: string;
-	from: string;
-	to: string;
 	description: string;
-	/** Constitutional preamble prefixed to every message on this channel. */
+	/**
+	 * Constitutional preamble prefixed to every message on this channel.
+	 * A template carries no endpoints - the convene wiring is the single
+	 * authority for who talks to whom - and may reference ${from} and
+	 * ${to}, which the engine substitutes with the wired endpoints at
+	 * delivery. A preamble without placeholders is used verbatim and
+	 * should be written generically.
+	 */
 	preamble: string;
 	source: "user" | "project";
 	filePath: string;
@@ -64,15 +69,19 @@ function collect(
 		}
 
 		const name = str(parsed.frontmatter.name);
-		const from = str(parsed.frontmatter.from);
-		const to = str(parsed.frontmatter.to);
 		const description = str(parsed.frontmatter.description);
-		if (!name || !from || !to || !description) {
+		if (!name || !description) {
 			warnings.push({
 				file: filePath,
-				message: `missing required frontmatter field (needs name, from, to, description) — skipped`,
+				message: `missing required frontmatter field (needs name, description) — skipped`,
 			});
 			continue;
+		}
+		if (str(parsed.frontmatter.from) || str(parsed.frontmatter.to)) {
+			warnings.push({
+				file: filePath,
+				message: "from/to in a mailbox definition are ignored — the convene wiring is the authority for endpoints; delete the fields",
+			});
 		}
 
 		if (mailboxes.has(name)) {
@@ -88,8 +97,6 @@ function collect(
 
 		mailboxes.set(name, {
 			name,
-			from,
-			to,
 			description,
 			preamble: parsed.body,
 			source,

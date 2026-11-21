@@ -19,7 +19,7 @@ for (const a of config.agents.values()) {
 }
 lines.push(`mailboxes (${config.mailboxes.size}):`);
 for (const m of config.mailboxes.values()) {
-	lines.push(`  - ${m.name} [${m.source}] ${m.from} -> ${m.to} :: ${m.description.split("\n")[0]}`);
+	lines.push(`  - ${m.name} [${m.source}] (template - endpoints wired at convene) :: ${m.description.split("\n")[0]}`);
 }
 lines.push(`specs (${config.specs.size}):`);
 for (const [name, s] of config.specs) {

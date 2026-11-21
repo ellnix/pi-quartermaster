@@ -15,8 +15,8 @@
 
 import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { createEngine } from "./create-engine.ts";
 import {
-	NotConfiguredEngine,
 	type Ack,
 	type ConveneInput,
 	type MessageInput,
@@ -87,9 +87,15 @@ export default function quartermaster(pi: ExtensionAPI): void {
 	// surface inside a child would let it convene sub-teams of its own.
 	if (process.env[CHILD_MARKER]) return;
 
-	// Replaced by the composed engine when the config, matcher, and fleet
-	// modules land. The tool surface above is final and never changes shape.
-	const engine: QuartermasterEngine = new NotConfiguredEngine();
+	// The engine loads configuration and machine-owned state lazily, on the
+	// first tool call, when the tool context is available. Each module that
+	// lands (config, matcher, fleet) extends the parts; the tool surface
+	// above is final and never changes shape.
+	let engine: QuartermasterEngine | null = null;
+	const getEngine = (ctx: ExtensionToolContext): QuartermasterEngine => {
+		engine ??= createEngine(ctx);
+		return engine;
+	};
 
 	pi.registerTool({
 		name: "convene_team",
@@ -144,7 +150,7 @@ export default function quartermaster(pi: ExtensionAPI): void {
 				),
 			),
 		}),
-		execute: async (_id, params: ConveneInput) => teamText(await engine.convene(params)),
+		execute: async (_id, params: ConveneInput, _sig, _up, ctx) => teamText(await getEngine(ctx).convene(params)),
 	});
 
 	pi.registerTool({
@@ -154,7 +160,7 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			"List the convened team: members, live status, the model each was drawn on, their " +
 			"descriptions and recommended use, pending permission asks, and unread reports.",
 		parameters: Type.Object({}),
-		execute: async () => teamText(await engine.status()),
+		execute: async (_id, _params, _sig, _up, ctx) => teamText(await getEngine(ctx).status()),
 	});
 
 	pi.registerTool({
@@ -169,7 +175,7 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			channel: Type.String({ description: "A mailbox name, or \"reports\"." }),
 			tail: Type.Optional(Type.Number({ description: "How many recent messages to return. Default 20." })),
 		}),
-		execute: async (_id, params: ReadChannelInput) => channelText(await engine.readChannel(params)),
+		execute: async (_id, params: ReadChannelInput, _sig, _up, ctx) => channelText(await getEngine(ctx).readChannel(params)),
 	});
 
 	pi.registerTool({
@@ -189,7 +195,7 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			outcome: Type.Number({ minimum: 0, maximum: 1, description: "Outcome quality, 0 to 1." }),
 			note: Type.Optional(Type.String({ description: "Short reason, recorded with the rating." })),
 		}),
-		execute: async (_id, params: RateInput) => ackText(await engine.rate(params)),
+		execute: async (_id, params: RateInput, _sig, _up, ctx) => ackText(await getEngine(ctx).rate(params)),
 	});
 
 	pi.registerTool({
@@ -204,7 +210,7 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			cost: Type.Number({ minimum: 0, maximum: 1, description: "Cost score, 1 = cheapest." }),
 			reason: Type.Optional(Type.String({ description: "Provenance, recorded with the override." })),
 		}),
-		execute: async (_id, params: SetCostInput) => ackText(await engine.setCost(params)),
+		execute: async (_id, params: SetCostInput, _sig, _up, ctx) => ackText(await getEngine(ctx).setCost(params)),
 	});
 
 	pi.registerTool({
@@ -220,7 +226,7 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			value: Type.Number({ minimum: 0, maximum: 1, description: "The override value, 0 to 1." }),
 			reason: Type.Optional(Type.String({ description: "Provenance, recorded with the override." })),
 		}),
-		execute: async (_id, params: SetOverrideInput) => ackText(await engine.setOverride(params)),
+		execute: async (_id, params: SetOverrideInput, _sig, _up, ctx) => ackText(await getEngine(ctx).setOverride(params)),
 	});
 
 	pi.registerTool({
@@ -228,7 +234,7 @@ export default function quartermaster(pi: ExtensionAPI): void {
 		label: "Pending asks",
 		description: "List pending permission asks from team members.",
 		parameters: Type.Object({}),
-		execute: async () => asksText(await engine.pendingAsks()),
+		execute: async (_id, _params, _sig, _up, ctx) => asksText(await getEngine(ctx).pendingAsks()),
 	});
 
 	pi.registerTool({
@@ -244,7 +250,7 @@ export default function quartermaster(pi: ExtensionAPI): void {
 				Type.String({ description: "Required for escalate-only categories: the user's confirmation, quoted." }),
 			),
 		}),
-		execute: async (_id, params: ResolveAskInput) => ackText(await engine.resolveAsk(params)),
+		execute: async (_id, params: ResolveAskInput, _sig, _up, ctx) => ackText(await getEngine(ctx).resolveAsk(params)),
 	});
 
 	pi.registerTool({
@@ -264,7 +270,7 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			body: Type.String({ description: "The message body." }),
 			steer: Type.Optional(Type.Boolean({ description: "True: interrupt the member's current run and steer it. False (default): queue as a follow-up." })),
 		}),
-		execute: async (_id, params: MessageInput) => ackText(await engine.message(params)),
+		execute: async (_id, params: MessageInput, _sig, _up, ctx) => ackText(await getEngine(ctx).message(params)),
 	});
 
 	pi.registerTool({
@@ -276,6 +282,6 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			"ratings wastes the session's evidence. The record persists; reconvening " +
 			"draws fresh models with the record as the blackboard.",
 		parameters: Type.Object({}),
-		execute: async () => teamText(await engine.dissolve()),
+		execute: async (_id, _params, _sig, _up, ctx) => teamText(await getEngine(ctx).dissolve()),
 	});
 }

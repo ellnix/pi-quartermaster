@@ -129,7 +129,7 @@ is a weight vector over score dimensions plus selection knobs:
 "review/frontier": {
   "weights": { "reviewing-code": 1.0 },
   "temperature": 0.7,
-  "filters": { "maxCostScore": 0.3, "require": ["text"] }
+  "filters": { "minCostScore": 0.3, "require": ["text"] }
 }
 "review/basic": {
   "weights": { "reviewing-code": 0.6, "cost": 0.4 },
@@ -142,7 +142,7 @@ is a weight vector over score dimensions plus selection knobs:
 - Selection = softmax over suitability at the spec's temperature —
   bounded chaos. τ near zero for paths where diversity is not worth the
   error rate (security review); τ high for insight-hunting roles.
-- Hard filters (capability, cost ceiling, auth) are crossed by nothing.
+- Hard filters (capability, cost floor — cost is 0-1 with 1 = cheapest, so a floor is a minimum — and auth) are crossed by nothing.
 - A spec weighting a dimension no model declares warns at load.
 
 ### Mailboxes
@@ -204,9 +204,10 @@ anthropic/claude-opus-4-8:
   scored models occasionally — the recovery path for wrongly-down-scored
   models is built in.
 - **Facts are config-shaped.** `team set-cost` / `team set-override`
-  write durable truths to `models.yaml` with provenance ("5× cheaper
-  subscription, 2026-11"). Overrides beat any amount of posterior drift —
-  the user is the veto layer.
+  write durable truths to `overrides.yaml` — machine-owned, with
+  provenance comments ("5× cheaper subscription, 2026-11"). The human-owned
+  `models.yaml` is never machine-rewritten. Overrides beat any amount of
+  posterior drift — the user is the veto layer.
 - **Unknown models degrade, not fail:** no scores → tier "unrated" —
   selectable by cheap specs, never by frontier specs.
 - Prior data is thin for non-code dimensions (design, research). That

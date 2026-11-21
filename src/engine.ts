@@ -187,7 +187,7 @@ export interface QuartermasterEngine {
  * config, matcher, and fleet modules land.
  */
 export class NotConfiguredEngine implements QuartermasterEngine {
-	async convene(): Promise<TeamStatus> {
+	async convene(_input: ConveneInput): Promise<TeamStatus> {
 		return this.team("convening waits on agent definitions in the agent dir (team/agents/) or the project .pi/agents/");
 	}
 
@@ -225,7 +225,7 @@ export class NotConfiguredEngine implements QuartermasterEngine {
 		return [];
 	}
 
-	async resolveAsk(): Promise<Ack> {
+	async resolveAsk(_input: ResolveAskInput): Promise<Ack> {
 		return this.ack("permission resolution arrives with the permissions module");
 	}
 

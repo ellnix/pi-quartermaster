@@ -19,6 +19,7 @@ import type {
 	SetCostInput,
 	SetOverrideInput,
 	TeamStatus,
+	WakeSource,
 } from "./engine.ts";
 import { composeEngine } from "./compose-engine.ts";
 import { loadConfig, type QuartermasterConfig } from "./config/index.ts";
@@ -72,6 +73,14 @@ export function createEngine(ctx: ExtensionToolContext): QuartermasterEngine {
 
 		dissolve: async (): Promise<TeamStatus> => {
 			return state.fleet?.dissolve() ?? notConvened();
+		},
+
+		// The watcher asks after every convene and dissolve; the fleet owns the
+		// record path, so this is the only honest source of it.
+		wakeSource: (): WakeSource | null => {
+			const recordPath = state.fleet?.record;
+			if (!recordPath) return null;
+			return { recordPath, policy: state.config.authority.wake };
 		},
 
 		readChannel: async (input: ReadChannelInput): Promise<ReadChannelResult> => {

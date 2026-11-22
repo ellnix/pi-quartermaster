@@ -3,6 +3,9 @@
  * exist so far, falling back to informative not-configured behavior for
  * the rest. This is how the implementation lands in slices — each PR
  * contributes its operations, the surface never changes shape.
+ *
+ * `wakeSource` defaults to null (nobody to wake) rather than delegating to
+ * the fallback: it is an observation about live state, not an operation.
  */
 
 import { NotConfiguredEngine, type QuartermasterEngine } from "./engine.ts";
@@ -20,5 +23,6 @@ export function composeEngine(parts: Partial<QuartermasterEngine>): Quartermaste
 		pendingAsks: parts.pendingAsks ?? (() => fallback.pendingAsks()),
 		resolveAsk: parts.resolveAsk ?? ((input) => fallback.resolveAsk(input)),
 		dissolve: parts.dissolve ?? (() => fallback.dissolve()),
+		wakeSource: parts.wakeSource ?? (() => null),
 	};
 }

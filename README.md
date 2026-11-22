@@ -61,8 +61,11 @@ surface:
 Members get `report`, `send`, and `request_permission` — their only
 channels. Reports carry tracking numbers (`r1, r2, ...`), messages too
 (`m1, m2, ...`), so all three parties steer by reference. All traffic
-is logged to the team record and readable on demand; nothing is pushed
-into your context.
+is logged to the team record and readable on demand. Mailbox traffic
+stays on demand; reports and permission asks also arrive as short wake
+digests (ids and one-line summaries), so a blocked member or a finished
+task is not missed while you are away. The `wake` section of
+`authority.jsonc` turns that off.
 
 ## Development
 
@@ -71,6 +74,7 @@ npm run check                  # tsc --noEmit (strict)
 pi -e .                        # load the package locally: extension + skills
 npx tsx scripts/smoke-config.ts [cwd]     # config discovery check
 npx tsx scripts/smoke-matcher.ts          # draw distribution check
+npx tsx scripts/smoke-wake.ts              # wake digest + debounce check
 node scripts/refresh-scores.cjs            # prior suggestions
 ```
 

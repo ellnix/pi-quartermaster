@@ -34,10 +34,30 @@
   fails the gate, and the run reports how many were excluded that way.
   An emptied pool errors naming the gate and its threshold. `minScores`
   rejects the `cost` key with a pointer to `minCostScore`.
-- `scripts/verify-math.ts` asserts the cost factor's arithmetic and
+- `scripts/verify-math.ts` asserts the cost penalty's arithmetic and
   `scripts/smoke-matcher.ts` asserts every acceptance case of both
   changes (unlisted-model admission, cost-only models, score floors,
   lambda 0, equal-cost odds).
+- **The quartermaster is no longer pull-only.** Peer sessions no longer
+  die unread: a report or a permission ask landing in the active team's
+  record wakes the quartermaster on its own, with no user ping. A wake is
+  a short digest — report ids, member, status and one summary line; ask
+  id, member and the requested action, pointing at `pending_asks` /
+  `resolve_ask` — never the payload: the record stays the blackboard and
+  `read_channel` still holds the detail. A debounce window (default 2s)
+  merges a burst into one notice. Mailbox traffic between members never
+  wakes anything; `channels/*.jsonl` is not watched at all. Wakes arrive
+  as follow-ups, so a running turn is never steered, and they never
+  impersonate the user. Directory events are best-effort: a null filename
+  drains anyway and a 30-second sweep drains unconditionally, so a missed
+  event delays a notice instead of stranding an ask. The `wake` section of
+  `authority.jsonc` switches `reports` and `asks` between `"immediate"` and
+  `"off"` (both off is exactly the old pull-only behavior) and sets
+  `debounceMs`.
+- `scripts/smoke-wake.ts` drives the watcher against a fixture record:
+  burst coalescing, digest content, channel traffic staying silent, the
+  follow-up delivery shape, policy off, retargeting, sweep idempotence, and
+  a loud report of unreadable record lines.
 
 ### Known boundaries and issues
 - A project `models.yaml` entry replaces the user entry of the same name

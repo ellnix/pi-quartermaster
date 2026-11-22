@@ -32,10 +32,12 @@ and tracking numbers on reports and messages.
    which relationships exist. The engine makes mechanical choices:
    which physical model, by filtering on auth, capability, cost, and
    evidence. Neither layer reaches into the other's domain.
-3. **Visible is not in-context.** All team traffic is logged by default
-   and delivered to the quartermaster's context never by default. It can
-   read, grep, or request digests of any channel on demand. Panopticon by
-   persistence, not by flooding.
+3. **Visible is not in-context.** All team traffic is logged by default.
+   Mailbox traffic reaches the quartermaster's context only on demand. The
+   two exceptions are reports and permission asks, which arrive as
+   debounced digests — ids and one-line summaries, never payloads —
+   because a blocked member and a finished task cost more to miss than to
+   deliver. Panopticon by persistence, not by flooding.
 4. **Repos self-describe; teams stay personal.** Spawned children run in
    the repo's cwd with project trust, so they load that repo's AGENTS.md
    and skills. A generic designer agent becomes repo-smart inside any
@@ -271,14 +273,43 @@ anthropic/claude-opus-4-8:
 - Clarification traffic flows through sanctioned mailboxes: prose
   between agents, off the quartermaster's context bus.
 
-**Wake mechanics** — all pi primitives, no new machinery:
+**Wake mechanics** — implemented in `src/fleet/wake.ts`, all pi primitives:
+
+- The extension watches **only** the active team record's `reports.jsonl`
+  and `asks.jsonl`. `channels/*.jsonl` is never watched and never wakes
+  anything: inter-agent prose is the members' business, read on demand.
+- A wake is a **digest**, never a payload: a report contributes its id,
+  member, status and one summary line; an ask contributes its id, member
+  and the requested action, plus pointers to `pending_asks` /
+  `resolve_ask` and `read_channel "reports"`. The record stays the
+  blackboard.
+- Delivery is a custom message (`customType: "quartermaster-wake"`, with
+  a registered TUI renderer) sent with `triggerTurn: true` and
+  `deliverAs: "followUp"`: it starts a turn when the quartermaster is
+  idle and queues after the current run when it is not — it never steers
+  a running turn. `pi.sendUserMessage` is deliberately not used: machine
+  traffic never impersonates the user.
+- A **debounce window** merges a burst of entries into one notice. The
+  window opens on the first entry and closes it; entries arriving after
+  the flush open a new one, so sustained traffic wakes on a cadence
+  rather than starving behind a resetting timer.
+- Directory events are best-effort. Node may deliver a null filename ("not
+  available" on some platforms) and events can be dropped, so a null
+  filename drains anyway and a 30-second sweep drains unconditionally;
+  the byte offsets make every drain catch up, so a lost event delays a
+  notice instead of stranding an ask.
+- History is not news: watching a record seeds the read offsets at the
+  current file sizes, so a restart (or re-enabling a kind) does not
+  replay the backlog. A newline-terminated line that will not parse is
+  counted and reported in the next digest rather than dropped silently.
+- Policy lives in `authority.jsonc`'s optional `wake` section —
+  `reports` and `asks` are `"immediate"` or `"off"`, plus `debounceMs`
+  (default 2000). Turning both off is exactly the 0.1.0 pull-only
+  protocol.
 
 - Idle child + mailbox message → the extension (RPC client) queues a
   prompt; the child's loop runs; its reply routes into the target
   mailbox. Busy child → queued, drained on idle.
-- Quartermaster busy + incoming report or permission ask → injected as a
-  message, processed when the current turn ends, exactly like a user
-  message arriving mid-turn.
 - Children die with the parent process. Logs persist in the session
   record; reconvening is a fresh draw with the record as the blackboard.
 
@@ -316,7 +347,7 @@ Quartermaster-facing (the interactive session):
 |---|---|
 | `convene` | form a team: draw a model per member (once), spawn persistent RPC children, define mailboxes |
 | `team list` | members, live status, their descriptions and recommended use |
-| `read-channel` / `digest` | inspect mailbox traffic (on demand, never pushed) |
+| `read-channel` / `digest` | inspect mailbox traffic and reports on demand; reports and asks also arrive as debounced wake digests |
 | `rate` | outcome-shaped rating → evidence store, at return-time |
 | `set-cost` / `set-override` | durable facts → models.yaml |
 | `dissolve` | end the session; collect reports; children exit |

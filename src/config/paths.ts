@@ -37,6 +37,29 @@ export function recordDir(teamId: string): string {
 	return path.join(teamDir(), "records", teamId);
 }
 
+/**
+ * The record's files. Named here, in one place, because the wake watcher
+ * observes exactly two of them: reports.jsonl and asks.jsonl. Channel logs
+ * under channels/ are never watched — inter-agent mail is not news.
+ */
+export function reportsFile(recordPath: string): string {
+	return path.join(recordPath, "reports.jsonl");
+}
+
+/** The ask log: asks and their resolutions share it, told apart by `type`. */
+export function asksFile(recordPath: string): string {
+	return path.join(recordPath, "asks.jsonl");
+}
+
+/** Directory of per-mailbox channel logs. */
+export function channelsDir(recordPath: string): string {
+	return path.join(recordPath, "channels");
+}
+
+export function channelFile(recordPath: string, mailbox: string): string {
+	return path.join(channelsDir(recordPath), `${mailbox}.jsonl`);
+}
+
 function isDirectory(p: string): boolean {
 	try {
 		return fs.statSync(p).isDirectory();

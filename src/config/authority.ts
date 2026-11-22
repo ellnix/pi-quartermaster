@@ -6,7 +6,8 @@
  * must always escalate to the user, are user-authored policy, not vibes.
  *
  * The file also carries the optional sections that tune behavior rather
- * than permission — currently `matching` (the always-on cost penalty).
+ * than permission — `matching` (the always-on cost penalty) and `wake`
+ * (whether reports and asks wake the quartermaster).
  * Absent means the documented defaults, and every malformed value warns
  * and falls back to its default alone: a typo must never quietly change
  * or disable policy.
@@ -25,6 +26,8 @@ export interface AuthorityConfig {
 	escalate: string[];
 	/** Draw-time knobs that apply to every spec; see `matchingOf`. */
 	matching: MatchingPolicy;
+	/** When the quartermaster is woken by the team record; see `wakeOf`. */
+	wake: WakePolicy;
 }
 
 /**
@@ -50,12 +53,38 @@ export const DEFAULT_MATCHING: MatchingPolicy = {
 	costLambda: 0.15,
 };
 
+/**
+ * The `wake` section: whether the quartermaster hears about reports and
+ * permission asks on its own.
+ *
+ * Two kinds, two switches, no third: `channels/*.jsonl` is never watched, so
+ * inter-agent mail cannot be promoted into a wake by configuration. `"off"`
+ * for a kind is exactly the 0.1.0 pull-only protocol for that kind.
+ */
+export interface WakePolicy {
+	/** Wake on a report landing in the record. */
+	reports: "immediate" | "off";
+	/** Wake on a permission ask landing in the record. */
+	asks: "immediate" | "off";
+	/** Debounce window in ms: a burst of entries becomes one notice. */
+	debounceMs: number;
+}
+
+export const DEFAULT_WAKE: WakePolicy = {
+	reports: "immediate",
+	asks: "immediate",
+	// Long enough to merge two members finishing together, short enough that an
+	// ask is seen well inside its ~10-minute timeout.
+	debounceMs: 2000,
+};
+
 const DEFAULT_AUTHORITY: AuthorityConfig = {
 	// Read-only work never needs a human.
 	autoApprove: ["read", "grep", "find", "ls", "bash:git *", "bash:composer test*", "bash:npm test*"],
 	// Destructive and exfiltrating surfaces always do.
 	escalate: ["bash:rm *", "bash:git push*", "write", "edit"],
 	matching: DEFAULT_MATCHING,
+	wake: DEFAULT_WAKE,
 };
 
 export function loadAuthority(warnings: DiscoveryWarning[]): AuthorityConfig {
@@ -90,7 +119,66 @@ export function loadAuthority(warnings: DiscoveryWarning[]): AuthorityConfig {
 		});
 		return DEFAULT_AUTHORITY;
 	}
-	return { autoApprove, escalate, matching: matchingOf(obj.matching, filePath, warnings) };
+	return {
+		autoApprove,
+		escalate,
+		matching: matchingOf(obj.matching, filePath, warnings),
+		wake: wakeOf(obj.wake, filePath, warnings),
+	};
+}
+
+/**
+ * Read the optional `wake` section. Same rule as `matching`: absent means the
+ * documented defaults, and each malformed knob falls back to its own default
+ * with a warning, so one typo never silently disables waking (or enables it).
+ */
+function wakeOf(
+	value: unknown,
+	filePath: string,
+	warnings: DiscoveryWarning[],
+): WakePolicy {
+	if (value === undefined) return DEFAULT_WAKE;
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		warnings.push({ file: filePath, message: "wake must be an object — using default wake policy" });
+		return DEFAULT_WAKE;
+	}
+	const obj = value as Record<string, unknown>;
+	return {
+		reports: wakeKind(obj.reports, "reports", filePath, warnings),
+		asks: wakeKind(obj.asks, "asks", filePath, warnings),
+		debounceMs: debounceOf(obj.debounceMs, filePath, warnings),
+	};
+}
+
+function wakeKind(
+	value: unknown,
+	key: "reports" | "asks",
+	filePath: string,
+	warnings: DiscoveryWarning[],
+): "immediate" | "off" {
+	if (value === undefined) return DEFAULT_WAKE[key];
+	if (value === "immediate" || value === "off") return value;
+	warnings.push({
+		file: filePath,
+		message: `wake.${key} must be "immediate" or "off" — using "${DEFAULT_WAKE[key]}"`,
+	});
+	return DEFAULT_WAKE[key];
+}
+
+function debounceOf(
+	value: unknown,
+	filePath: string,
+	warnings: DiscoveryWarning[],
+): number {
+	if (value === undefined) return DEFAULT_WAKE.debounceMs;
+	if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 60_000) {
+		warnings.push({
+			file: filePath,
+			message: `wake.debounceMs must be a number of milliseconds in [0, 60000] — using ${DEFAULT_WAKE.debounceMs}`,
+		});
+		return DEFAULT_WAKE.debounceMs;
+	}
+	return value;
 }
 
 /**

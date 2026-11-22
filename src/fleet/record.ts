@@ -11,6 +11,7 @@
  */
 
 import * as fs from "node:fs";
+import { asksFile, channelFile, reportsFile } from "../config/paths.ts";
 import type { ReportEntry } from "./crewman.ts";
 
 export function ensureRecord(recordPath: string): void {
@@ -47,12 +48,12 @@ export function appendReport(recordPath: string, entry: Omit<ReportEntry, "id">)
 	// Sequential per record: r1, r2, ... An explicit count beats parsing the
 	// last line, because a torn line must not restart the sequence.
 	const numbered: ReportEntry = { id: `r${existing.length + 1}`, ...entry };
-	appendJsonl(`${recordPath}/reports.jsonl`, numbered as unknown as Record<string, unknown>);
+	appendJsonl(reportsFile(recordPath), numbered as unknown as Record<string, unknown>);
 	return numbered;
 }
 
 export function readReports(recordPath: string, tail?: number): ReportEntry[] {
-	return readJsonl<ReportEntry>(`${recordPath}/reports.jsonl`, tail);
+	return readJsonl<ReportEntry>(reportsFile(recordPath), tail);
 }
 
 export interface ChannelEntry {
@@ -69,9 +70,8 @@ export interface ChannelEntry {
 	body: string;
 }
 
-export function channelFile(recordPath: string, mailbox: string): string {
-	return `${recordPath}/channels/${mailbox}.jsonl`;
-}
+/** Channel logs are named by config/paths.ts, beside the two watched files. */
+export { channelFile } from "../config/paths.ts";
 
 export function appendChannel(recordPath: string, mailbox: string, entry: Omit<ChannelEntry, "id">): ChannelEntry {
 	const existing = readChannelLog(recordPath, mailbox);
@@ -106,15 +106,15 @@ export interface AskRecordEntry extends Partial<ResolutionEntry> {
 }
 
 export function appendAsk(recordPath: string, entry: AskEntry): void {
-	appendJsonl(`${recordPath}/asks.jsonl`, { type: "ask", ...entry } as unknown as Record<string, unknown>);
+	appendJsonl(asksFile(recordPath), { type: "ask", ...entry } as unknown as Record<string, unknown>);
 }
 
 export function appendResolution(recordPath: string, entry: ResolutionEntry): void {
-	appendJsonl(`${recordPath}/asks.jsonl`, { type: "resolution", ...entry } as unknown as Record<string, unknown>);
+	appendJsonl(asksFile(recordPath), { type: "resolution", ...entry } as unknown as Record<string, unknown>);
 }
 
 export function readAskLog(recordPath: string): Array<{ ask?: AskEntry; resolution?: ResolutionEntry }> {
-	const raw = readJsonl<AskRecordEntry>(`${recordPath}/asks.jsonl`);
+	const raw = readJsonl<AskRecordEntry>(asksFile(recordPath));
 	const out: Array<{ ask?: AskEntry; resolution?: ResolutionEntry }> = [];
 	for (const entry of raw) {
 		if (entry.type === "ask") {

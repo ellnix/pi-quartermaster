@@ -23,6 +23,8 @@ export interface SpecOverrideInput {
 		require?: string[];
 		/** Minimum cost score of a candidate (0-1, 1 = cheapest). */
 		minCostScore?: number;
+		/** Minimum deterministic score per dimension (0-1) — a requirement of the draw. */
+		minScores?: Record<string, number>;
 		/** Let unrated models (no scores anywhere) into the pool. */
 		allowUnrated?: boolean;
 	};

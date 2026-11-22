@@ -7,6 +7,13 @@
  * human-owned: the engine never rewrites it. Durable facts recorded
  * through the tools land in overrides.yaml instead, and the matcher
  * joins catalog cost, this file, and overrides with that precedence.
+ *
+ * This file is also the **spend whitelist**: an entry with `scores` (or a
+ * score override in overrides.yaml) is what makes a model rated, and only
+ * rated models enter a pool whose spec does not set `allowUnrated`. A
+ * `cost`-only entry is price knowledge without a quality judgement, so it
+ * stays unrated. Evidence never admits a model — it refines the dimensions
+ * of one you listed.
  */
 
 import * as fs from "node:fs";

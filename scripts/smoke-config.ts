@@ -145,7 +145,11 @@ lines.push(`models (${config.models.size}):`);
 for (const [id, m] of config.models) {
 	lines.push(`  - ${id} cost=${m.cost ?? "-"} require=${JSON.stringify(m.require ?? null)} scores=${JSON.stringify(m.scores ?? {})}`);
 }
-lines.push(`authority: autoApprove=${JSON.stringify(config.authority.autoApprove)} escalate=${JSON.stringify(config.authority.escalate)}`);
+lines.push(
+	`authority: autoApprove=${JSON.stringify(config.authority.autoApprove)} ` +
+		`escalate=${JSON.stringify(config.authority.escalate)} ` +
+		`matching.costLambda=${config.authority.matching.costLambda}`,
+);
 
 lines.push("", "project discovery (git root stops the walk):");
 lines.push(...checkProjectDiscovery());

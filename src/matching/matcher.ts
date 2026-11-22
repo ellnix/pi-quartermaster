@@ -6,13 +6,28 @@
  * is a Thompson sample from its evidence posterior when evidence exists
  * (the prior otherwise), then the softmax over suitabilities at the
  * spec's temperature decides. Hard filters — auth, capability, cost
- * floor — are crossed by nothing. Unknown models are "unrated": filtered
- * out unless the spec explicitly allows them, so a cheap spec can scout
- * new arrivals while a frontier spec never gambles on them.
+ * floor, score floor — are crossed by nothing. Unknown models are
+ * "unrated": filtered out unless the spec explicitly allows them, so a
+ * cheap spec can scout new arrivals while a frontier spec never gambles
+ * on them.
+ *
+ * Two invariants worth stating outright, because each was once wrong:
+ *
+ * - **models.yaml and overrides are the spend whitelist.** A model is
+ *   rated only when the user gave it score signal; evidence refines a
+ *   listed model's dimensions but never admits an unlisted one. The
+ *   pool for a spec without `allowUnrated` is exactly the set of models
+ *   the user paid attention to.
+ * - **Cost always penalizes the draw.** Suitability loses
+ *   `lambda * (1 - costScore)` before the softmax, independently of the
+ *   spec's weights. A model's total cost influence is therefore the spec
+ *   weight's cost term plus this fixed penalty; because the penalty is a
+ *   subtraction it cancels exactly in the odds between equal-cost models,
+ *   so their relative odds hold at any lambda and any temperature.
  */
 
 import type { ModelEntry, QuartermasterConfig, SpecDef } from "../config/index.ts";
-import { evidenceSample, type EvidenceStore } from "./evidence.ts";
+import { evidenceMean, evidenceSample, type EvidenceStore } from "./evidence.ts";
 import type { Overrides } from "./overrides.ts";
 
 /** What the matcher needs to know about a candidate. */
@@ -64,6 +79,8 @@ export function drawForSpec(
 	const logMin = Math.log(Math.min(...catalogCosts));
 	const logMax = Math.log(Math.max(...catalogCosts));
 
+	const lambda = config.authority.matching.costLambda;
+
 	const pool = withAuth.map((candidate) => {
 		const entry = config.models.get(candidate.modelId);
 		const costOverride = overrides.costs.get(candidate.modelId) ?? overrides.costs.get(`provider/${candidate.provider}`);
@@ -72,16 +89,20 @@ export function drawForSpec(
 			entry?.cost ??
 			(logMax > logMin ? 1 - (Math.log(Math.max(0.01, candidate.catalogCostPerMtok)) - logMin) / (logMax - logMin) : 1);
 
-		const rated = hasAnySignal(entry, overrides, evidence, candidate.modelId);
+		const rated = hasScoreSignal(entry, overrides, candidate.modelId);
 		const dims = scoreDimensions(candidate.modelId, entry, overrides, evidence);
-		const suitability = dot(spec.weights, dims, costScore);
+		// Cost's total influence is the weights' cost term plus this fixed
+		// penalty: additive, so it cannot skew models of equal cost against each
+		// other and it still bites at temperature 0, where a multiplicative
+		// factor on suitability would compress the gaps instead of shifting them.
+		const suitability = dot(spec.weights, dims, costScore) - costPenalty(costScore, lambda);
 		// models.yaml `require` is a veto, not a grant: effective input is the
 		// catalog's list intersected with it. It can remove a modality the
 		// catalog claims, never add one the catalog omits.
 		const input = entry?.require
 			? candidate.input.filter((m) => entry.require!.includes(m))
 			: candidate.input;
-		return { candidate, input, costScore, dims, suitability, rated };
+		return { candidate, entry, input, costScore, dims, suitability, rated };
 	});
 
 	let eligible = pool;
@@ -107,12 +128,37 @@ export function drawForSpec(
 		if (eligible.length === 0) {
 			return {
 				ok: false,
-				error: "every candidate is unrated (no scores in models.yaml, overrides, or evidence) — score them or set allowUnrated on the spec",
+				error: "every candidate is unrated (no scores in models.yaml or overrides; evidence refines, it never admits) — score them or set allowUnrated on the spec",
 				notes,
 			};
 		}
 		if (before > eligible.length) {
 			notes.push(`${before - eligible.length} unrated candidate(s) excluded — set allowUnrated to scout new models`);
+		}
+	}
+	const scoreGate = spec.filters?.minScores;
+	if (scoreGate && Object.keys(scoreGate).length > 0) {
+		let absent = 0;
+		let belowBar = 0;
+		eligible = eligible.filter((p) => {
+			const verdict = gateVerdict(p.candidate.modelId, p.entry, scoreGate, overrides, evidence);
+			if (verdict === "absent") absent += 1;
+			if (verdict === "below-bar") belowBar += 1;
+			return verdict === "pass";
+		});
+		if (belowBar > 0) {
+			notes.push(`score floor excluded ${belowBar} candidate(s) below a gated bar`);
+		}
+		if (absent > 0) {
+			notes.push(
+				`score floor excluded ${absent} candidate(s) carrying no score on a gated dimension — a requirement is met by evidence, not by absence`,
+			);
+		}
+		if (eligible.length === 0) {
+			const gates = Object.entries(scoreGate)
+				.map(([dim, floor]) => `${dim} >= ${floor}`)
+				.join(", ");
+			return { ok: false, error: `no model meets the score floor (${gates})`, notes };
 		}
 	}
 
@@ -135,11 +181,90 @@ function specAllowsUnrated(spec: SpecDef): boolean {
 	return Boolean(spec.filters?.allowUnrated);
 }
 
-function hasAnySignal(entry: ModelEntry | undefined, overrides: Overrides, evidence: EvidenceStore, modelId: string): boolean {
+/**
+ * Whether a model carries score signal — the spend whitelist test.
+ *
+ * Only the user's own words count: a `models.yaml` entry with scores, or a
+ * score override. Evidence deliberately does not: it accumulates from smoke
+ * checks and `allowUnrated` scout gambles, so counting it as a rating let an
+ * unlisted model into a rated pool the user never authorized — and, because
+ * `scoreDimensions` seeds dimensions only from the files, that admission
+ * contributed nothing to suitability.
+ */
+function hasScoreSignal(
+	entry: ModelEntry | undefined,
+	overrides: Overrides,
+	modelId: string,
+): boolean {
 	if (entry?.scores && Object.keys(entry.scores).length > 0) return true;
 	if (overrides.scores.has(modelId)) return true;
-	if ((evidence.get(modelId)?.size ?? 0) > 0) return true;
 	return false;
+}
+
+/**
+ * The always-on cost penalty: cheaper is better, structurally.
+ *
+ * An additive subtraction before the softmax — the model's total cost
+ * influence is the spec weight's cost term plus `lambda * (1 - costScore)`.
+ * Additive rather than multiplicative because multiplying suitability by
+ * `1 - lambda * (1 - costScore)` shrinks the gaps between equal-cost models
+ * too: it changes their odds instead of leaving them alone. A subtraction
+ * cancels exactly in the odds ratio, and it keeps cost active at temperature
+ * 0, where the draw is deterministic. `lambda` of 0 reproduces the
+ * distribution that predates this penalty; 1 (cheapest) is never penalized.
+ */
+export function costPenalty(costScore: number, lambda: number): number {
+	return lambda * (1 - costScore);
+}
+
+/**
+ * Evaluate a candidate against the spec's score floor.
+ *
+ * The stack is the deterministic one — overrides beat models.yaml, and where
+ * neither speaks the evidence posterior mean applies. Never the Thompson
+ * sample: requirements are stable, chaos lives in the softmax draw.
+ *
+ * One verdict per candidate, because a candidate can be both absent on one
+ * gated dimension and below the bar on another: a concrete failure is the
+ * real reason, so `below-bar` wins over `absent`. Counting both would make
+ * the notes claim a model was excluded for missing data when a bar it did
+ * have a score for was what failed it.
+ */
+function gateVerdict(
+	modelId: string,
+	entry: ModelEntry | undefined,
+	gate: Record<string, number>,
+	overrides: Overrides,
+	evidence: EvidenceStore,
+): "pass" | "below-bar" | "absent" {
+	let absent = false;
+	for (const [dimension, floor] of Object.entries(gate)) {
+		const value = deterministicScore(modelId, entry, overrides, evidence, dimension);
+		if (value === undefined) {
+			absent = true;
+			continue;
+		}
+		if (value < floor) return "below-bar";
+	}
+	return absent ? "absent" : "pass";
+}
+
+/** The deterministic score stack: override, then models.yaml, then posterior mean. */
+function deterministicScore(
+	modelId: string,
+	entry: ModelEntry | undefined,
+	overrides: Overrides,
+	evidence: EvidenceStore,
+	dimension: string,
+): number | undefined {
+	let overridden: number | undefined;
+	for (const o of overrides.scores.get(modelId) ?? []) {
+		if (o.dimension === dimension) overridden = o.value;
+	}
+	if (overridden !== undefined) return overridden;
+	const listed = entry?.scores?.[dimension];
+	if (listed !== undefined) return listed;
+	return evidenceMean(evidence, modelId, dimension);
 }
 
 /**

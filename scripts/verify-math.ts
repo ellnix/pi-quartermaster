@@ -12,7 +12,9 @@
 process.env.PI_CODING_AGENT_DIR ??= "/tmp/qm-math-agent-dir";
 
 import * as fs from "node:fs";
+import { DEFAULT_MATCHING } from "../src/config/authority.ts";
 import { evidenceMean, evidenceSample, loadEvidence, recordOutcome } from "../src/matching/evidence.ts";
+import { costPenalty } from "../src/matching/matcher.ts";
 
 fs.rmSync(process.env.PI_CODING_AGENT_DIR, { recursive: true, force: true });
 
@@ -83,6 +85,56 @@ if (lowHigh / DRAWS < 0.01 || lowHigh / DRAWS > 0.15) {
 	console.log("FAIL recovery-path frequency out of the expected 1-15% band");
 	failures += 1;
 }
+
+// --- Property 6: the always-on cost penalty is additive, not multiplicative.
+// suitability -= lambda * (1 - costScore), before the softmax. The claims the
+// draw relies on: the cheapest is never penalized, the penalty is monotone in
+// cost, it leaves equal-cost odds exactly alone (it cancels in the odds
+// ratio), and lambda 0 changes nothing at all.
+//
+// Scope note: the odds identities below are algebraic — they hold the form,
+// not the plumbing, because this script subtracts the penalty itself. That
+// drawForSpec actually applies it, and that the cancellation survives the real
+// softmax over real candidates, is smoke-matcher's job (its cost cases assert
+// measured shares over thousands of draws). Cite both, never this alone, for
+// end-to-end coverage.
+const lambda = DEFAULT_MATCHING.costLambda;
+check("cost penalty at cost 1 (cheapest) is 0", costPenalty(1, lambda), 0, 0.0000001);
+check("cost penalty at cost 0 is lambda", costPenalty(0, lambda), lambda, 0.0000001);
+check("cost penalty at cost 0.4 is 0.6*lambda", costPenalty(0.4, lambda), 0.6 * lambda, 0.0000001);
+console.log(
+	`ok   cost penalty is monotone: cost 0.9 -> ${costPenalty(0.9, lambda).toFixed(4)}, cost 0.4 -> ${costPenalty(0.4, lambda).toFixed(4)}`,
+);
+if (!(costPenalty(0.9, lambda) < costPenalty(0.4, lambda))) {
+	console.log("FAIL the cost penalty must be lighter for the cheaper model");
+	failures += 1;
+}
+
+// Odds of a over b under softmax at temperature tau. Equal-cost models take
+// the same penalty, which must cancel: odds(a - p, b - p) === odds(a, b).
+function odds(a: number, b: number, tau: number): number {
+	return Math.exp((a - b) / tau);
+}
+const penalty = costPenalty(0.5, lambda);
+check("equal-cost odds are exactly preserved at tau 1", odds(0.8 - penalty, 0.6 - penalty, 1), odds(0.8, 0.6, 1), 0.0000001);
+check("equal-cost odds are exactly preserved at tau 0.1", odds(0.8 - penalty, 0.6 - penalty, 0.1), odds(0.8, 0.6, 0.1), 0.0000001);
+// With equal quality, the penalty tilts the odds to whichever model is
+// cheaper — the shift is exactly the penalty difference, not a rescaling.
+const equalQuality = odds(0.8 - costPenalty(0.9, lambda), 0.8 - costPenalty(0.4, lambda), 0.1);
+console.log(
+	`ok   equal-quality, unequal-cost odds: ${equalQuality.toFixed(4)} at tau 0.1 (1 = a coin flip; >1 favours the cost-0.9 model)`,
+);
+if (!(equalQuality > 1)) {
+	console.log("FAIL the penalty must favour the cheaper model at equal quality");
+	failures += 1;
+}
+for (const cost of [0, 0.25, 0.5, 0.75, 1]) {
+	if (Math.abs(costPenalty(cost, 0)) > 0.0000001) {
+		console.log(`FAIL lambda 0 must leave cost ${cost} untouched, got ${costPenalty(cost, 0)}`);
+		failures += 1;
+	}
+}
+console.log("ok   lambda 0 leaves every cost score untouched (today's distribution)");
 
 if (failures > 0) {
 	console.error(`\n${failures} assertion(s) failed`);

@@ -192,6 +192,21 @@ INTEGRITY OF YOUR REVIEW. REMEMBER THE NATURE OF YOUR RELATIONSHIP IS
 ADVERSARIAL. THE QUARTERMASTER OBSERVES ALL TRAFFIC ON THIS CHANNEL.
 ```
 
+Channel identity is the wiring, not the template file. A template wired
+once keeps its own name as the channel id and its log
+(`channels/<template>.jsonl`), so existing records need no migration. A
+template wired more than once gets one channel per pairing, id
+`<template>__<from>--<to>`, log `channels/<template>__<from>--<to>.jsonl`.
+`read_channel` accepts the template name (all wirings, merged by time), a
+channel id, or a `from--to` pairing. The same template wired twice with
+identical endpoints fails convene.
+
+Agent definitions likewise: a file may declare `variants`, each an
+addressable agent sharing the file's prompt and tools, with its spec
+deep-merged over the file's. Variants expand at load time, so everything
+downstream (draws, sessions, ratings) sees ordinary agents; `definition`
+records the lineage.
+
 The preamble is constitutional text: relationship framing that cannot
 live in a skill (skills say *how* to review; the channel says what this
 reviewer's relationship *to this builder* is). The orchestrator may

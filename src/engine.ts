@@ -80,6 +80,8 @@ export interface ConveneInput {
 export interface MemberStatus {
 	/** Member name in this team (the agent definition name). */
 	name: string;
+	/** The agent definition (file) this member came from, when it is a variant. */
+	definition?: string;
 	description: string;
 	spec?: string;
 	model?: string;

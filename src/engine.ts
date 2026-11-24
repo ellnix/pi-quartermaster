@@ -41,8 +41,12 @@ export interface ConveneMemberInput {
 	 * must be named is a spec that belongs in a file, not here.
 	 */
 	spec?: SpecOverrideInput;
-	/** The complete, self-contained task for this member. */
-	task: string;
+	/**
+	 * The complete, self-contained task for this member. Optional: with no
+	 * task (omitted or "") the member convenes idle and not started — no run,
+	 * no tokens — and its first message starts it. Whitespace-only fails.
+	 */
+	task?: string;
 }
 
 /**
@@ -84,7 +88,7 @@ export interface MemberStatus {
 	 * idiom. It is compile-time-checked everywhere the value is read or
 	 * written, serializes as plain strings, and adds no runtime object.
 	 */
-	state: "convening" | "working" | "idle" | "dissolved" | "error";
+	state: "convening" | "unstarted" | "working" | "idle" | "dissolved" | "error";
 	note?: string;
 }
 

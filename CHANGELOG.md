@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+### Added
+- `convene_team` member `task` is optional. With no task (omitted or `""`) a
+  member convenes armed: model drawn, channels open, no session run and no
+  tokens. `team_list` shows it as `idle (not started)`. The first
+  `message_member` (or channel delivery) starts it and is its first input;
+  `steer` on a never-started member behaves like a normal message. A
+  whitespace-only task fails convene with a clear error.
+
 ## [0.2.0]
 ### Fixed
 - The spend whitelist is a whitelist again. A model with no entry — or an

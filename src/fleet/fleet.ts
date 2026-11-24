@@ -89,6 +89,16 @@ export class Fleet {
 			return this.status(["a team is already convened — dissolve_team before convening another"]);
 		}
 
+		// An accidental whitespace-only task must fail, not silently start a
+		// member with nothing to do. Empty or omitted means "convene armed".
+		for (const request of input.members) {
+			if (request.task !== undefined && request.task !== "" && request.task.trim() === "") {
+				throw new Error(
+					`member "${request.agent}": task is whitespace-only — give a real task, or omit it / pass "" to convene the member idle`,
+				);
+			}
+		}
+
 		const warnings: string[] = [];
 		const mailboxes = input.mailboxes ?? [];
 
@@ -107,7 +117,7 @@ export class Fleet {
 				warnings.push(`member "${agent.name}" listed twice — second occurrence skipped`);
 				continue;
 			}
-			await this.spawnMember(agent, request.spec, request.task, warnings);
+			await this.spawnMember(agent, request.spec, request.task?.trim() ?? "", warnings);
 		}
 
 		// The convene wiring is the single authority for endpoints. A channel
@@ -217,22 +227,33 @@ export class Fleet {
 			}
 
 			member.session = session;
-			member.state = "working";
-
-			const prompt = assembleSpawnPrompt(member.name, agent, task, this.channelsForMember(member.name));
-			void session
-				.prompt(prompt)
-				.then(() => {
-					member.state = "idle";
-					this.flushDeliveries(member);
-				})
-				.catch((err: unknown) => {
-					member.state = "error";
-					member.note = `run failed: ${String(err)}`;
-				});
+			if (task === "") {
+				// Armed: session, model and channels exist; no run, no tokens.
+				// The first message starts it.
+				member.state = "unstarted";
+				return;
+			}
+			this.startMember(member, task);
 		});
 		this.creationChain = creation.catch(() => {});
 		await creation;
+	}
+
+	/** Start a member's first run: standing instructions and channels, then the task. */
+	private startMember(member: FleetMember, task: string): void {
+		if (!member.session) return;
+		member.state = "working";
+		const prompt = assembleSpawnPrompt(member.name, member.agent, task, this.channelsForMember(member.name));
+		void member.session
+			.prompt(prompt)
+			.then(() => {
+				member.state = "idle";
+				this.flushDeliveries(member);
+			})
+			.catch((err: unknown) => {
+				member.state = "error";
+				member.note = `run failed: ${String(err)}`;
+			});
 	}
 
 	/**
@@ -308,6 +329,12 @@ export class Fleet {
 		].join("\n");
 		const text = `${framing}\n${body}`;
 
+		if (recipient.state === "unstarted") {
+			// First input starts the member. There is nothing to steer, so
+			// steer and follow-up behave identically here.
+			this.startMember(recipient, text);
+			return;
+		}
 		if (behavior === "steer" && recipient.state !== "working") {
 			// Nothing to interrupt: a steer degrades to a plain prompt.
 			void recipient.session.prompt(text).then(() => {

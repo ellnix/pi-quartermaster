@@ -60,7 +60,7 @@ function teamText(status: TeamStatus): { content: { type: "text"; text: string }
 	} else {
 		lines.push(`Team ${status.teamId ?? "?"} — ${status.members.length} member(s).`);
 		for (const m of status.members) {
-			lines.push(`- ${m.name} [${m.state}] ${m.model ? `on ${m.model}` : "(no model drawn)"} — ${m.description}${m.note ? ` (${m.note})` : ""}`);
+			lines.push(`- ${m.name} [${m.state === "unstarted" ? "idle (not started)" : m.state}] ${m.model ? `on ${m.model}` : "(no model drawn)"} — ${m.description}${m.note ? ` (${m.note})` : ""}`);
 		}
 		if (status.openMailboxes.length) {
 			lines.push(`Open mailboxes: ${status.openMailboxes.join(", ")}`);
@@ -152,7 +152,9 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			"with a model drawn once from its spec (temperature-bounded, filtered by auth, " +
 			"capability, and cost). Agents carry their reusable specs; an override here is " +
 			"built on the fly, not named. Members are persistent: the task is the initial " +
-			"instruction, and you can guide a member step by step afterwards with " +
+			"instruction (omit it, or pass an empty string, to convene a member armed: " +
+			"drawn and wired but idle and not started, costing nothing until its first " +
+			"message_member starts it), and you can guide a member step by step afterwards with " +
 			"message_member. Declare the channel repository up front: every channel to open, " +
 			"with its endpoints - this wiring is the single authority for who talks to whom.",
 		promptSnippet: "Convene a team of sub-agents for parallel or multi-role work.",
@@ -187,7 +189,7 @@ export default function quartermaster(pi: ExtensionAPI): void {
 							{ description: "A spec built on the fly, overriding the agent's own for this deployment." },
 						),
 					),
-					task: Type.String({ description: "The initial task for this member. Self-contained enough to start from." }),
+					task: Type.Optional(Type.String({ description: "The initial task for this member. Self-contained enough to start from. Omit or \"\" to convene idle (not started); the first message_member starts it. Whitespace-only is an error." })),
 				}),
 				{ minItems: 1 },
 			),
@@ -318,7 +320,8 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			"The member does not have to be idle to receive it: pi can steer a running " +
 			"agent between its inputs. Set steer to interrupt the current run and steer " +
 			"it with your message; leave it false and the message queues as a follow-up " +
-			"for when the run finishes. All messages are logged to the record like " +
+			"for when the run finishes. A member that was convened without a task starts on its " +
+			"first message, which is its first input; steer is then the same as a normal message. All messages are logged to the record like " +
 			"mailbox traffic. Members are persistent: use this to guide step by step, " +
 			"relay results of approved actions, or correct course mid-flight.",
 		parameters: Type.Object({

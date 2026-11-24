@@ -33,7 +33,16 @@ Standing orders for the quartermaster.
    endpoints. The wiring is the single authority for who talks to whom;
    creating a channel mid-flight is a recorded decision, not a
    convenience.
-4. Escalations: auth, tenant-scoping, or money-adjacent diffs → the
+4. **Armed convene.** The draws are the scarce, one-shot thing; tasks are
+   cheap to send later. Omit `task` (or pass `""`) to convene a member
+   idle and not started: model drawn, channels open, no run and no
+   tokens. `team_list` shows it as `idle (not started)`. Its first
+   `message_member` starts it, and that message is its first input, so
+   write it as a complete task. Use this to draw the whole roster early
+   and start each member when its spec is ready, instead of spending a
+   warmup turn on "stand by" acknowledgments. Do not wait for reports
+   from members you have not started.
+5. Escalations: auth, tenant-scoping, or money-adjacent diffs → the
    security reviewer at frontier settings; spec-bearing changes → the
    business-logic reviewer reading the task text against the diff;
    view/CSS changes → the designer with screenshots.

@@ -179,6 +179,47 @@ function checkVariants(): string[] {
 	return lines;
 }
 
+/** worktrees.jsonc: defaults when absent, every malformed value warns and falls back alone. */
+function checkWorktreeConfig(): string[] {
+	const lines: string[] = [];
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "qm-worktrees-"));
+	try {
+		const dir = path.join(root, ".pi", "team");
+		fs.mkdirSync(dir, { recursive: true });
+		const absent = loadConfig(root).worktrees;
+		const file = path.join(dir, "worktrees.jsonc");
+		fs.writeFileSync(
+			file,
+			`{ // comment
+  "base": "develop",
+  "setup": ["composer install --no-interaction", "npm ci"],
+  "copy": [".env", "/etc/passwd", "../outside", "db/local.sqlite"],
+  "keepOnDissolve": "yes",
+  "location": "repo",
+  "setupTimeoutMs": 5,
+  "bogus": 1,
+}`,
+		);
+		const config = loadConfig(root);
+		const w = config.worktrees;
+		const msgs = config.warnings.filter((x) => x.file === file).map((x) => x.message);
+		const checks: Array<[string, boolean]> = [
+			["absent file: defaults (no setup, tmp, auto)", absent.setup.length === 0 && absent.location === "tmp" && absent.default === "auto" && !absent.keepOnDissolve],
+			["valid keys parse", w.base === "develop" && w.setup.length === 2 && w.location === "repo"],
+			["copy keeps only relative in-repo paths", w.copy.join() === ".env,db/local.sqlite"],
+			["escaping copy entries warn", msgs.filter((m) => m.includes("inside the repository")).length === 2],
+			["bad keepOnDissolve warns and falls back", w.keepOnDissolve === false && msgs.some((m) => m.includes("keepOnDissolve"))],
+			["too-small timeout warns and falls back", w.setupTimeoutMs >= 1000 && msgs.some((m) => m.includes("setupTimeoutMs"))],
+			["unknown key warns", msgs.some((m) => m.includes('unknown key "bogus"'))],
+		];
+		for (const [label, ok] of checks) lines.push(`  ${label}: ${ok ? "ok" : "WRONG"}`);
+		if (checks.some(([, ok]) => !ok)) throw new Error("worktree config parsing misbehaves");
+	} finally {
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+	return lines;
+}
+
 const cwd = process.argv[2] ?? process.cwd();
 const config = loadConfig(cwd);
 
@@ -207,6 +248,9 @@ lines.push(...checkProjectDiscovery());
 lines.push(...checkGitFileAndOpenWalk());
 lines.push("", "frontmatter warnings (parser reason required):");
 lines.push(...checkFrontmatterWarning());
+
+lines.push("", "worktrees.jsonc:");
+lines.push(...checkWorktreeConfig());
 
 lines.push("", "variants (one file, many agents):");
 lines.push(...checkVariants());

@@ -10,6 +10,10 @@ import { parseFrontmatter, toList } from "./frontmatter.ts";
 import { projectAgentsDir, userAgentsDir } from "./paths.ts";
 import { validateSpec, type SpecDef } from "./spec.ts";
 
+export type WorktreeMode = "shared" | "per-member" | "attach";
+
+export const WORKTREE_MODES: readonly WorktreeMode[] = ["shared", "per-member", "attach"];
+
 export interface AgentDef {
 	/** The addressable agent name: the file's name, or a variant's name. */
 	name: string;
@@ -20,6 +24,13 @@ export interface AgentDef {
 	tools?: string[];
 	/** The model policy, carried inline. Reusable specs live here, in agent definitions. */
 	spec?: SpecDef;
+	/**
+	 * Where this agent works: `shared` (the user's tree), `per-member` (its own
+	 * git worktree and branch), or `attach` (placed in another member's
+	 * worktree, for readers). Absent: per-member for agents that can write,
+	 * shared otherwise; see worktrees.jsonc `default`.
+	 */
+	worktree?: WorktreeMode;
 	/** Direct physical model pin; skips the draw when present. */
 	model?: string;
 	systemPrompt: string;
@@ -85,6 +96,13 @@ function collectFromDir(
 			continue;
 		}
 
+		let worktree: WorktreeMode | undefined;
+		if (parsed.frontmatter.worktree !== undefined) {
+			const mode = str(parsed.frontmatter.worktree);
+			if ((WORKTREE_MODES as readonly string[]).includes(mode)) worktree = mode as WorktreeMode;
+			else warnings.push({ file: filePath, message: `worktree must be one of ${WORKTREE_MODES.join(", ")} — ignored` });
+		}
+
 		const variants = parseVariants(parsed.frontmatter.variants, filePath, warnings);
 		// Each addressable agent: scaffolding (prompt, tools, model pin) is
 		// shared; stance (the spec) is the definition's, deep-merged with the
@@ -126,6 +144,7 @@ function collectFromDir(
 				tools: toList(parsed.frontmatter.tools),
 				spec: agent.spec,
 				model: str(parsed.frontmatter.model) || undefined,
+				worktree,
 				systemPrompt: parsed.body,
 				source,
 				filePath,

@@ -26,6 +26,8 @@ export interface CrewHooks {
 	onAsk: (tool: string, args: string, why: string) => Promise<{ approve: boolean; note: string }>;
 	/** False once the member is removed: a run that outlives removal writes nothing. */
 	isActive: () => boolean;
+	/** Where the member works, when isolated; the engine stamps it on every report. */
+	workspace: () => { branch?: string; worktree: string } | undefined;
 }
 
 export interface ReportEntry {
@@ -40,6 +42,9 @@ export interface ReportEntry {
 	status: "complete" | "partial" | "blocked";
 	summary: string;
 	confidence?: number;
+	/** The member's branch and worktree, attached by the engine so a report can say where the work is. */
+	branch?: string;
+	worktree?: string;
 }
 
 export interface SendReceipt {
@@ -83,6 +88,10 @@ export function crewmanTools(memberName: string, recordPath: string, hooks: Crew
 					status: params.status,
 					summary: params.summary,
 					confidence: params.confidence,
+					...(() => {
+						const w = hooks.workspace();
+						return w ? { branch: w.branch, worktree: w.worktree } : {};
+					})(),
 				});
 				return {
 					content: [

@@ -32,7 +32,25 @@ export interface SpecOverrideInput {
 	};
 }
 
-export interface ConveneMemberInput {
+/** Where a member works; see AgentDef.worktree. */
+export type WorktreeModeInput = "shared" | "per-member" | "attach";
+
+/** Workspace placement, shared by convene members and add_member. */
+export interface WorkspaceInput {
+	/**
+	 * Override where this member works for this deployment: `shared` (the
+	 * user's tree), `per-member` (its own git worktree and branch) or
+	 * `attach` (placed in another member's worktree; needs `attachTo`, and
+	 * the agent must not be granted edit or write). Absent: the agent file's
+	 * `worktree`, else per-member for agents that can write and shared for
+	 * the rest.
+	 */
+	worktree?: WorktreeModeInput;
+	/** For `attach`: the member that owns the worktree. It must already exist. */
+	attachTo?: string;
+}
+
+export interface ConveneMemberInput extends WorkspaceInput {
 	/** Agent definition name (the `name` in an agent .md file). */
 	agent: string;
 	/**
@@ -71,7 +89,7 @@ export interface ConveneMailboxInput {
 	to: string;
 }
 
-export interface AddMemberInput {
+export interface AddMemberInput extends WorkspaceInput {
 	/** Agent or variant name. */
 	agent: string;
 	spec?: SpecOverrideInput;
@@ -79,6 +97,17 @@ export interface AddMemberInput {
 	task?: string;
 	/** Channels to open, extending the graph; existing wiring is untouched. */
 	mailboxes?: ConveneMailboxInput[];
+}
+
+export interface WorktreesInput {
+	/** Remove quartermaster worktrees not claimed by this session's live members. */
+	prune?: boolean;
+	/** Prune only this team's trees (a team id from the listing). */
+	team?: string;
+	/** Prune every team's unclaimed trees. Another running session's trees look unclaimed here; prefer `team`. */
+	all?: boolean;
+	/** Also remove trees with uncommitted changes. Branches with commits are still kept. */
+	discardDirty?: boolean;
 }
 
 export interface OpenMailboxInput {
@@ -115,6 +144,8 @@ export interface MemberStatus {
 	description: string;
 	spec?: string;
 	model?: string;
+	/** Where the member works, when it is isolated or attached; absent = the user's tree. */
+	workspace?: { mode: "per-member" | "attach"; path: string; branch?: string; attachedTo?: string };
 	/** Set on members added mid-flight (add_member). */
 	addedAt?: number;
 	/** Set once removed; the member stays on the roster as history. */
@@ -241,6 +272,8 @@ export interface QuartermasterEngine {
 	dissolve(): Promise<TeamStatus>;
 	addMember(input: AddMemberInput): Promise<Ack>;
 	removeMember(input: RemoveMemberInput): Promise<Ack>;
+	/** List quartermaster worktrees of this repository, or prune the unclaimed ones. */
+	worktrees(input: WorktreesInput): Promise<Ack>;
 	openMailbox(input: OpenMailboxInput): Promise<Ack>;
 	closeMailbox(input: CloseMailboxInput): Promise<Ack>;
 	/**
@@ -309,6 +342,10 @@ export class NotConfiguredEngine implements QuartermasterEngine {
 
 	async removeMember(input: RemoveMemberInput): Promise<Ack> {
 		return this.ack(`no convened team — nothing to remove ${input.member} from`);
+	}
+
+	async worktrees(_input: WorktreesInput): Promise<Ack> {
+		return this.ack("worktrees arrive with the fleet");
 	}
 
 	async openMailbox(input: OpenMailboxInput): Promise<Ack> {

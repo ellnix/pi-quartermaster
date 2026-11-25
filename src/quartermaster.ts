@@ -61,6 +61,18 @@ function teamText(status: TeamStatus): { content: { type: "text"; text: string }
 	const lines: string[] = [];
 	if (!status.convened) {
 		lines.push("No team is convened.");
+		const avail = status.available;
+		if (avail && avail.agents.length > 0) {
+			lines.push("", "Agents you can convene (pick by description; each has its own tools and spec):");
+			for (const a of avail.agents) {
+				lines.push(`- ${a.name}${a.definition ? ` (variant of ${a.definition})` : ""} — ${a.description}`);
+				lines.push(`    tools: ${a.tools}; spec: ${a.pinnedModel ? `pinned to ${a.pinnedModel}` : a.spec}`);
+			}
+		}
+		if (avail && avail.mailboxes.length > 0) {
+			lines.push("", "Mailbox templates you can wire (from/to are chosen at convene):");
+			for (const m of avail.mailboxes) lines.push(`- ${m.name} — ${m.description}`);
+		}
 	} else {
 		lines.push(`Team ${status.teamId ?? "?"} — ${status.members.length} member(s).`);
 		for (const m of status.members) {

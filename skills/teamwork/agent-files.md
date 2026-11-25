@@ -1,8 +1,11 @@
 # Agent files: reference
 
 Read this when authoring or editing a file in `team/agents/` (or the
-project's `.pi/agents/`). `team_list` shows each agent's `description`;
-that and the spec are what you route on.
+project's `.pi/agents/`). With no team convened, `team_list` shows each
+configured agent's `description`, tools and spec; that is what you plan
+a convene from. The file below is **one illustration**: a user's roles,
+names, tools and score dimensions are their own, so copy the shape, not
+the contents, and take dimension names from their `models.yaml`.
 
 ```markdown
 ---

@@ -59,6 +59,17 @@ export function createEngine(ctx: ExtensionToolContext): QuartermasterEngine {
 			const { config } = state;
 			return {
 				convened: false,
+				available: {
+					agents: [...config.agents.values()].map((a) => ({
+						name: a.name,
+						definition: a.definition !== a.name ? a.definition : undefined,
+						description: a.description.replace(/\s+/g, " ").trim(),
+						tools: (a.tools ?? ["read", "ls", "find", "grep"]).join(", "),
+						spec: a.spec ? `τ${a.spec.temperature} ${Object.entries(a.spec.weights).map(([d, w]) => `${d}:${w}`).join(" ")}` : "-",
+						pinnedModel: a.model,
+					})),
+					mailboxes: [...config.mailboxes.values()].map((m) => ({ name: m.name, description: m.description.replace(/\s+/g, " ").trim() })),
+				},
 				members: [],
 				openMailboxes: [],
 				pendingAsks: 0,

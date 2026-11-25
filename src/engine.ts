@@ -129,7 +129,15 @@ export interface MemberStatus {
 	note?: string;
 }
 
+/** What the user's configuration offers, shown while planning a convene. */
+export interface AvailableConfig {
+	agents: Array<{ name: string; definition?: string; description: string; tools: string; spec: string; pinnedModel?: string }>;
+	mailboxes: Array<{ name: string; description: string }>;
+}
+
 export interface TeamStatus {
+	/** Configured agents and mailboxes; present when no team is convened. */
+	available?: AvailableConfig;
 	convened: boolean;
 	teamId?: string;
 	members: MemberStatus[];

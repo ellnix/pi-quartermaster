@@ -9,6 +9,7 @@
 import { loadAgents, type AgentDef, type DiscoveryWarning } from "./agents.ts";
 import { loadMailboxes, type MailboxDef } from "./mailboxes.ts";
 import { loadModels, type ModelEntry } from "./models.ts";
+import { loadWorktreeConfig, type WorktreeConfig } from "./worktrees.ts";
 import { loadAuthority, type AuthorityConfig } from "./authority.ts";
 import { projectAgentsDir, teamDir, userAgentsDir } from "./paths.ts";
 
@@ -17,6 +18,8 @@ export interface QuartermasterConfig {
 	mailboxes: Map<string, MailboxDef>;
 	models: Map<string, ModelEntry>;
 	authority: AuthorityConfig;
+	/** How members are placed in git worktrees; project-level, defaults when absent. */
+	worktrees: WorktreeConfig;
 	warnings: DiscoveryWarning[];
 	/** Populated when every layer is empty — the informative empty state. */
 	emptyState?: string;
@@ -28,6 +31,7 @@ export function loadConfig(cwd: string): QuartermasterConfig {
 	const mailboxes = loadMailboxes(cwd, warnings);
 	const models = loadModels(cwd, warnings);
 	const authority = loadAuthority(warnings);
+	const worktrees = loadWorktreeConfig(cwd, warnings);
 
 	// Cross-check: an agent with neither spec nor model cannot be convened
 	// — say it at load, not at convene time.
@@ -45,6 +49,7 @@ export function loadConfig(cwd: string): QuartermasterConfig {
 		mailboxes,
 		models,
 		authority,
+		worktrees,
 		warnings,
 	};
 
@@ -66,4 +71,5 @@ export function loadConfig(cwd: string): QuartermasterConfig {
 
 export type { AgentDef, MailboxDef, ModelEntry, AuthorityConfig, DiscoveryWarning };
 export type { SpecDef, SpecFilters } from "./spec.ts";
+export type { WorktreeConfig } from "./worktrees.ts";
 export type { MatchingPolicy, WakePolicy } from "./authority.ts";

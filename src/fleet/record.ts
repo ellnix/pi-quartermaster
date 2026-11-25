@@ -105,6 +105,8 @@ export interface CompositionEntry {
 	dimensions?: Array<{ dimension: string; weight: number }>;
 	/** "convene" or "add_member" for additions. */
 	via?: string;
+	/** Where an added member works, when isolated or attached. */
+	worktree?: { mode: string; path: string; branch?: string; base?: string; attachedTo?: string };
 	reason?: string;
 	forced?: boolean;
 	by: "quartermaster";

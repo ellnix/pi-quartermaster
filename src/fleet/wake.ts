@@ -72,6 +72,8 @@ const SWEEP_MS = 30_000;
 
 export interface WakeReport {
 	id: string;
+	/** When the member filed it (ms since epoch); lets a digest say how old it is. */
+	ts?: number;
 	member: string;
 	status: string;
 	summary: string;
@@ -353,6 +355,7 @@ function parseLine(line: string): ParsedLine {
 		kind: "report",
 		report: {
 			id: obj.id,
+			ts: typeof obj.ts === "number" ? obj.ts : undefined,
 			member: obj.member,
 			status: typeof obj.status === "string" ? obj.status : "unknown",
 			summary: obj.summary,
@@ -369,7 +372,10 @@ export function formatDigest(details: WakeDetails): string {
 	const counts: string[] = [];
 	if (details.asks.length > 0) counts.push(`${details.asks.length} permission ask(s)`);
 	if (details.reports.length > 0) counts.push(`${details.reports.length} report(s)`);
-	const lines = [`Wake from the team record (${counts.join(", ") || "unreadable entries"}).`];
+	// The team is named so a digest that arrives late, after a dissolve or a
+	// long turn, cannot be mistaken for news from the team that is running now.
+	const team = details.recordPath.split("/").filter(Boolean).pop() ?? "?";
+	const lines = [`Wake from the team record of ${team} (${counts.join(", ") || "unreadable entries"}).`];
 	if (details.asks.length > 0) {
 		lines.push("", "ASKS — a member is blocked and its ask times out in ~10 minutes:");
 		for (const ask of details.asks) {
@@ -380,7 +386,8 @@ export function formatDigest(details: WakeDetails): string {
 	if (details.reports.length > 0) {
 		lines.push("", "REPORTS — digests only, the record is the blackboard:");
 		for (const report of details.reports) {
-			lines.push(`- ${report.id} (${report.status}) ${report.member}: ${oneLine(report.summary)}`);
+			const age = report.ts !== undefined ? `, ${ageOf(report.ts)}` : "";
+			lines.push(`- ${report.id} (${report.status}${age}) ${report.member}: ${oneLine(report.summary)}`);
 		}
 		lines.push('  Full text: read_channel "reports".');
 	}
@@ -388,6 +395,15 @@ export function formatDigest(details: WakeDetails): string {
 		lines.push("", `${details.malformed} unreadable line(s) in the record — read the files directly.`);
 	}
 	return lines.join("\n");
+}
+
+/** "just now", "4 min ago", "2 h ago": enough to tell fresh news from a queued digest. */
+function ageOf(ts: number, now = Date.now()): string {
+	const secs = Math.max(0, Math.round((now - ts) / 1000));
+	if (secs < 90) return "just now";
+	const mins = Math.round(secs / 60);
+	if (mins < 90) return `${mins} min ago`;
+	return `${Math.round(mins / 60)} h ago`;
 }
 
 /** Collapse whitespace to one line and cap the length. */

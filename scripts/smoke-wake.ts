@@ -97,6 +97,8 @@ async function main(): Promise<void> {
 	}
 
 	const text = first.text;
+	check("digest names the team it came from", text.split("\n")[0].includes("team record of "), text.split("\n")[0]);
+	check("report lines say how old they are", /\((complete|partial|blocked|\w+), just now\)/.test(text), text.split("\n").find((l) => l.startsWith("- r")) ?? "");
 	check("digest names both report ids", text.includes(r2.id) && text.includes(r3.id), r2.id + ", " + r3.id);
 	check("digest names the ask and the requesting member", text.includes(askId) && text.includes("asks to run bash"), text.split("\n")[0]);
 	check("digest points at the resolving tools", text.includes("pending_asks") && text.includes("resolve_ask"));

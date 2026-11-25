@@ -24,6 +24,11 @@
   counts only reports newer than your last `read_channel "reports"`.
 - Identical warnings (for example the unrated-candidates note, once per
   drawn member) are reported once.
+- Wake digests name the team they came from and how old each report is,
+  so one that arrives late (after a long turn, or after a dissolve) cannot
+  be mistaken for news from the running team.
+- The `worktrees` listing no longer fails when a tree is removed while it is
+  being listed.
 - `team_list` with no team shows each agent's `worktree` setting.
 - Provisioning is gated on project trust: when pi does not trust the
   project, the `setup` and `copy` in its `.pi/team/worktrees.jsonc` are

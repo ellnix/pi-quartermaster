@@ -23,6 +23,8 @@ export function composeEngine(parts: Partial<QuartermasterEngine>): Quartermaste
 		pendingAsks: parts.pendingAsks ?? (() => fallback.pendingAsks()),
 		resolveAsk: parts.resolveAsk ?? ((input) => fallback.resolveAsk(input)),
 		dissolve: parts.dissolve ?? (() => fallback.dissolve()),
+		addMember: parts.addMember ?? ((input) => fallback.addMember(input)),
+		removeMember: parts.removeMember ?? ((input) => fallback.removeMember(input)),
 		wakeSource: parts.wakeSource ?? (() => null),
 	};
 }

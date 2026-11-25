@@ -23,6 +23,23 @@ Standing orders for the quartermaster.
   to start from — then guide step by step with `message_member`, which
   can steer a running member mid-flight.
 
+## Changing the team mid-flight
+
+- `add_member` draws one new member into the live team (an agent or
+  variant name; the task may be omitted to add it armed). Use it when
+  scope grows, a specialist is needed, or a variant should race. It
+  takes an optional `mailboxes` list for the new member's channels;
+  members already running are not told about them, so message them.
+  A failed draw leaves the team untouched.
+- `remove_member` retires a member whose part is done, who is stuck, or
+  who lost a race. It refuses while the member works or has pending
+  asks; `force: true` interrupts and denies the asks. Channels close,
+  logs and reports stay readable. **Rate before or after removing**:
+  `rate_member` still works on a removed member, but an unrated removal
+  loses its evidence.
+- Prefer these over dissolve and reconvene, which re-draws everyone.
+  A removed name stays in the record; add a variant with another name.
+
 ## Convening
 
 1. `team_list` first — see who exists and what each is for.

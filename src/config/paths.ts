@@ -51,6 +51,11 @@ export function asksFile(recordPath: string): string {
 	return path.join(recordPath, "asks.jsonl");
 }
 
+/** Composition history: members added and removed, with who/when/why. */
+export function compositionFile(recordPath: string): string {
+	return path.join(recordPath, "composition.jsonl");
+}
+
 /** Directory of per-mailbox channel logs. */
 export function channelsDir(recordPath: string): string {
 	return path.join(recordPath, "channels");

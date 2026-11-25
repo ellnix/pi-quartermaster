@@ -8,7 +8,9 @@
 import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import type {
 	Ack,
+	AddMemberInput,
 	ConveneInput,
+	RemoveMemberInput,
 	MessageInput,
 	PendingAsk,
 	QuartermasterEngine,
@@ -115,6 +117,18 @@ export function createEngine(ctx: ExtensionToolContext): QuartermasterEngine {
 				.sort((a, b) => a.ts - b.ts)
 				.slice(-tail);
 			return { channel: input.channel, messages: entries, warnings: [] };
+		},
+
+		addMember: async (input: AddMemberInput): Promise<Ack> => {
+			const fleet = state.fleet;
+			if (!fleet?.convened) return { ok: false, message: "no convened team (or it was dissolved) — convene before adding members" };
+			return fleet.addMember(input);
+		},
+
+		removeMember: async (input: RemoveMemberInput): Promise<Ack> => {
+			const fleet = state.fleet;
+			if (!fleet?.convened) return { ok: false, message: "no convened team (or it was dissolved) — nothing to remove members from" };
+			return fleet.removeMember(input);
 		},
 
 		message: async (input: MessageInput): Promise<Ack> => {

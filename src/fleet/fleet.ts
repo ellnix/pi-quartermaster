@@ -22,7 +22,16 @@ import {
 	type ExtensionToolContext,
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import type { ConveneInput, ConveneMailboxInput, MemberStatus, SpecOverrideInput, TeamStatus } from "../engine.ts";
+import type {
+	Ack,
+	AddMemberInput,
+	ConveneInput,
+	ConveneMailboxInput,
+	MemberStatus,
+	RemoveMemberInput,
+	SpecOverrideInput,
+	TeamStatus,
+} from "../engine.ts";
 import type { QuartermasterConfig, AgentDef } from "../config/index.ts";
 import type { MailboxDef } from "../config/mailboxes.ts";
 import { validateSpec, type SpecDef } from "../config/spec.ts";
@@ -31,7 +40,7 @@ import type { EvidenceStore } from "../matching/evidence.ts";
 import type { Overrides } from "../matching/overrides.ts";
 import { recordDir } from "../config/paths.ts";
 import { crewmanTools, type CrewHooks, type SendReceipt } from "./crewman.ts";
-import { appendAsk, appendChannel, askResolution, ensureRecord, pendingAsks, readReports } from "./record.ts";
+import { appendAsk, appendChannel, appendComposition, appendResolution, askResolution, ensureRecord, pendingAsks, readReports } from "./record.ts";
 
 /** Set around child session creation; quartermaster.ts stays inert under it. */
 export const CHILD_MARKER = "QM_CHILD";
@@ -45,6 +54,9 @@ interface FleetMember {
 	session?: AgentSession;
 	state: MemberStatus["state"];
 	note?: string;
+	addedAt?: number;
+	removedAt?: number;
+	removedReason?: string;
 	/** Messages waiting for this member's current run to finish. */
 	pendingDelivery: Array<{ text: string }>;
 }
@@ -64,6 +76,8 @@ interface OpenChannel {
 	template: MailboxDef;
 	from: string;
 	to: string;
+	/** Closed when an endpoint is removed: no delivery, log preserved. */
+	closed?: boolean;
 }
 
 /** Tools a member gets when its agent file grants none: read-only. */
@@ -113,18 +127,10 @@ export class Fleet {
 
 		// The same template wired twice with the same endpoints is a caller
 		// mistake, not a legal multiplicity: fail before anything is drawn.
-		const seenWirings = new Set<string>();
-		for (const w of mailboxes) {
-			const key = JSON.stringify([w.name, w.from, w.to]);
-			if (seenWirings.has(key)) {
-				throw new Error(
-					`mailbox "${w.name}" is wired twice from "${w.from}" to "${w.to}" — a duplicate wiring; wire each pairing once`,
-				);
-			}
-			seenWirings.add(key);
-		}
-		const wiredCount = new Map<string, number>();
-		for (const w of mailboxes) wiredCount.set(w.name, (wiredCount.get(w.name) ?? 0) + 1);
+		const duplicate = this.duplicateWiring(mailboxes);
+		if (duplicate) throw new Error(duplicate);
+
+		const starts: Array<{ member: FleetMember; task: string }> = [];
 
 		// Members first: the channel wiring references them.
 		this.teamId = `t${Date.now().toString(36)}`;
@@ -141,17 +147,64 @@ export class Fleet {
 				warnings.push(`member "${agent.name}" listed twice — second occurrence skipped`);
 				continue;
 			}
-			await this.spawnMember(agent, request.spec, request.task?.trim() ?? "", warnings);
+			const member = await this.spawnMember(agent, request.spec, warnings);
+			if (member) starts.push({ member, task: request.task?.trim() ?? "" });
 		}
 
 		// The convene wiring is the single authority for endpoints. A channel
 		// whose endpoints are not members cannot open, but the rest of the
 		// team is not held hostage by one bad wire.
 		for (const wiring of mailboxes) {
-			warnings.push(...this.openChannel(wiring, (wiredCount.get(wiring.name) ?? 1) > 1));
+			warnings.push(...this.openChannel(wiring, this.isMultiWired(wiring.name, mailboxes)));
+		}
+
+		// Runs begin only now: a member's standing instructions list the
+		// team and the channels, which exist only once everyone is drawn.
+		for (const { member, task } of starts) {
+			this.logAdded(member, "convene");
+			if (task !== "") this.startMember(member, task);
 		}
 
 		return this.status(warnings);
+	}
+
+	/** A message when the batch wires one template to the same endpoints twice, or reopens an open wiring. */
+	private duplicateWiring(wirings: ConveneMailboxInput[]): string | null {
+		const seen = new Set<string>();
+		for (const c of this.channels.values()) if (!c.closed) seen.add(JSON.stringify([c.name, c.from, c.to]));
+		for (const w of wirings) {
+			const key = JSON.stringify([w.name, w.from, w.to]);
+			if (seen.has(key)) {
+				return `mailbox "${w.name}" is wired twice from "${w.from}" to "${w.to}" — a duplicate wiring; wire each pairing once`;
+			}
+			seen.add(key);
+		}
+		return null;
+	}
+
+	/** One template backing several pairings (in this batch or with existing channels) gets pairing ids. */
+	private isMultiWired(template: string, batch: ConveneMailboxInput[]): boolean {
+		return batch.filter((w) => w.name === template).length > 1 || [...this.channels.values()].some((c) => c.name === template);
+	}
+
+	/** An active member: present and not removed. */
+	private active(name: string): FleetMember | undefined {
+		const member = this.members.get(name);
+		return member && member.state !== "removed" ? member : undefined;
+	}
+
+	private logAdded(member: FleetMember, via: string): void {
+		const rating = this.memberForRating(member.name);
+		appendComposition(this.recordPath!, {
+			type: "added",
+			ts: member.addedAt ?? Date.now(),
+			member: member.name,
+			definition: member.agent.definition,
+			model: member.modelId,
+			dimensions: rating?.dimensions,
+			via,
+			by: "quartermaster",
+		});
 	}
 
 	private openChannel(wiring: ConveneMailboxInput, multiWired: boolean): string[] {
@@ -161,15 +214,16 @@ export class Fleet {
 			return [`mailbox "${wiring.name}" is not defined — channel skipped`];
 		}
 		const warningsFor: string[] = [];
-		if (!this.members.has(wiring.from)) {
+		if (!this.active(wiring.from)) {
 			warningsFor.push(`channel "${wiring.name}" wired from "${wiring.from}" who is not a member — channel will not open`);
 		}
-		if (!this.members.has(wiring.to)) {
+		if (!this.active(wiring.to)) {
 			warningsFor.push(`channel "${wiring.name}" wired to "${wiring.to}" who is not a member — channel will not open`);
 		}
 		if (warningsFor.length > 0) return warningsFor;
 
 		const id = multiWired ? `${wiring.name}__${wiring.from}--${wiring.to}` : wiring.name;
+		if (this.channels.has(id)) return [`channel "${id}" already exists — skipped`];
 		this.channels.set(id, { id, name: wiring.name, template, from: wiring.from, to: wiring.to });
 		return warnings;
 	}
@@ -177,9 +231,10 @@ export class Fleet {
 	private async spawnMember(
 		agent: AgentDef,
 		specOverride: SpecOverrideInput | undefined,
-		task: string,
 		warnings: string[],
-	): Promise<void> {
+		dropOnFailure = false,
+	): Promise<FleetMember | undefined> {
+		let result: FleetMember | undefined;
 		// The child marker is process-global, so creations serialize.
 		const creation = this.creationChain.then(async () => {
 			// The convene override is built on the fly and wins; the agent's
@@ -202,10 +257,16 @@ export class Fleet {
 			};
 			this.members.set(member.name, member);
 
+			const fail = (note: string): void => {
+				member.state = "error";
+				member.note = note;
+				// A mid-flight add must leave the team unchanged on failure.
+				if (dropOnFailure) this.members.delete(member.name);
+			};
+
 			const draw = await this.resolveModel(member, warnings);
 			if (!draw.ok) {
-				member.state = "error";
-				member.note = draw.error;
+				fail(draw.error);
 				return;
 			}
 			member.modelId = draw.modelId;
@@ -214,8 +275,7 @@ export class Fleet {
 			const model =
 				this.ctx.modelRegistry.find(draw.modelId.slice(0, slash), draw.modelId.slice(slash + 1)) ?? undefined;
 			if (!model || !this.ctx.modelRegistry.hasConfiguredAuth(model)) {
-				member.state = "error";
-				member.note = `drawn model ${draw.modelId} is not usable in this session`;
+				fail(`drawn model ${draw.modelId} is not usable in this session`);
 				return;
 			}
 
@@ -229,6 +289,7 @@ export class Fleet {
 				const hooks: CrewHooks = {
 					onSend: (mailbox, body) => this.routeSend(member, mailbox, body),
 					onAsk: (tool, args, why) => this.registerAsk(member, tool, args, why),
+					isActive: () => member.state !== "removed" && member.state !== "dissolved",
 				};
 				const tools = crewmanTools(member.name, this.recordPath!, hooks);
 				const allowlist = [...new Set([...(agent.tools ?? DEFAULT_TOOLS), ...tools.map((t) => t.name)])];
@@ -241,41 +302,52 @@ export class Fleet {
 				});
 				session = created.session;
 			} catch (err) {
-				member.state = "error";
-				member.note = `child session failed to start: ${String(err)}`;
+				fail(`child session failed to start: ${String(err)}`);
 				return;
 			} finally {
 				delete process.env[CHILD_MARKER];
 			}
 
+			// Armed until started: session and model exist, no run, no tokens.
+			// The caller starts it once the team's channels are open; with no
+			// task, its first message does.
 			member.session = session;
-			if (task === "") {
-				// Armed: session, model and channels exist; no run, no tokens.
-				// The first message starts it.
-				member.state = "unstarted";
-				return;
-			}
-			this.startMember(member, task);
+			member.state = "unstarted";
+			result = member;
 		});
 		this.creationChain = creation.catch(() => {});
 		await creation;
+		return result;
+	}
+
+	/**
+	 * Run a member's prompt, tracking its state. A removed or dissolved member
+	 * stays so: a run settling after a forced removal must not resurrect it.
+	 */
+	private track(member: FleetMember, run: Promise<unknown>, what: string): void {
+		const gone = () => member.state === "removed" || member.state === "dissolved";
+		void run
+			.then(() => {
+				if (gone()) return;
+				member.state = "idle";
+				this.flushDeliveries(member);
+			})
+			.catch((err: unknown) => {
+				if (gone()) return;
+				member.state = "error";
+				member.note = `${what} failed: ${String(err)}`;
+			});
 	}
 
 	/** Start a member's first run: standing instructions and channels, then the task. */
 	private startMember(member: FleetMember, task: string): void {
 		if (!member.session) return;
 		member.state = "working";
-		const prompt = assembleSpawnPrompt(member.name, member.agent, task, this.channelsForMember(member.name));
-		void member.session
-			.prompt(prompt)
-			.then(() => {
-				member.state = "idle";
-				this.flushDeliveries(member);
-			})
-			.catch((err: unknown) => {
-				member.state = "error";
-				member.note = `run failed: ${String(err)}`;
-			});
+		const team = [...this.members.values()]
+			.filter((m) => m.state !== "removed" && m.name !== member.name)
+			.map((m) => ({ name: m.name, description: m.agent.description.split("\n")[0] }));
+		const prompt = assembleSpawnPrompt(member.name, member.agent, task, this.channelsForMember(member.name), team);
+		this.track(member, member.session.prompt(prompt), "run");
 	}
 
 	/**
@@ -285,7 +357,7 @@ export class Fleet {
 	 */
 	private routeSend(member: FleetMember, mailboxName: string, body: string): string | SendReceipt {
 		const channel = this.resolveOutbound(member.name, mailboxName);
-		const recipient = channel ? this.members.get(channel.to) : undefined;
+		const recipient = channel ? this.active(channel.to) : undefined;
 		// One uniform refusal: never reveal whether the channel exists, how it
 		// is wired, or who it belongs to. Members learn only their own graph.
 		if (!channel || channel.from !== member.name || !recipient || !recipient.session) {
@@ -310,8 +382,8 @@ export class Fleet {
 	 */
 	private resolveOutbound(sender: string, name: string): OpenChannel | undefined {
 		const byId = this.channels.get(name);
-		if (byId) return byId;
-		const matches = [...this.channels.values()].filter((c) => c.name === name && c.from === sender);
+		if (byId) return byId.closed ? undefined : byId;
+		const matches = [...this.channels.values()].filter((c) => c.name === name && c.from === sender && !c.closed);
 		return matches.length === 1 ? matches[0] : undefined;
 	}
 
@@ -339,6 +411,9 @@ export class Fleet {
 		const member = this.members.get(memberName);
 		if (!member) {
 			return { ok: false, message: `no member named "${memberName}" — see team_list` };
+		}
+		if (member.state === "removed") {
+			return { ok: false, message: `${memberName} was removed from the team — it can no longer receive messages` };
 		}
 		const entry = appendChannel(this.recordPath!, "quartermaster", {
 			channel: "quartermaster",
@@ -387,13 +462,7 @@ export class Fleet {
 		}
 		if (behavior === "steer" && recipient.state !== "working") {
 			// Nothing to interrupt: a steer degrades to a plain prompt.
-			void recipient.session.prompt(text).then(() => {
-				recipient.state = "idle";
-				this.flushDeliveries(recipient);
-			}).catch((err: unknown) => {
-				recipient.state = "error";
-				recipient.note = `delivery failed: ${String(err)}`;
-			});
+			this.track(recipient, recipient.session.prompt(text), "delivery");
 			return;
 		}
 		if (behavior === "followUp" && (recipient.state === "working" || recipient.state === "convening")) {
@@ -401,32 +470,135 @@ export class Fleet {
 			return;
 		}
 		recipient.state = "working";
-		void recipient.session
-			.prompt(text, { streamingBehavior: behavior === "steer" ? "steer" : "followUp" })
-			.then(() => {
-				recipient.state = "idle";
-				this.flushDeliveries(recipient);
-			})
-			.catch((err: unknown) => {
-				recipient.state = "error";
-				recipient.note = `delivery failed: ${String(err)}`;
-			});
+		this.track(
+			recipient,
+			recipient.session.prompt(text, { streamingBehavior: behavior === "steer" ? "steer" : "followUp" }),
+			"delivery",
+		);
 	}
 
 	private flushDeliveries(member: FleetMember): void {
 		const next = member.pendingDelivery.shift();
 		if (!next || !member.session) return;
 		member.state = "working";
-		void member.session
-			.prompt(next.text)
-			.then(() => {
-				member.state = "idle";
-				this.flushDeliveries(member);
-			})
-			.catch((err: unknown) => {
-				member.state = "error";
-				member.note = `delivery failed: ${String(err)}`;
+		this.track(member, member.session.prompt(next.text), "delivery");
+	}
+
+	/**
+	 * Add a member to a live team. One draw, same matcher and gates; a failed
+	 * draw leaves the team exactly as it was. Existing members are not
+	 * disturbed, and their standing instructions are not rewritten.
+	 */
+	async addMember(input: AddMemberInput): Promise<Ack> {
+		if (input.task !== undefined && input.task !== "" && input.task.trim() === "") {
+			return { ok: false, message: `task is whitespace-only — give a real task, or omit it / pass "" to add ${input.agent} idle` };
+		}
+		const agent = this.config.agents.get(input.agent);
+		if (!agent) return { ok: false, message: `agent "${input.agent}" is not defined — see team_list for configured agents` };
+		if (this.members.has(agent.name)) {
+			const gone = this.members.get(agent.name)!.state === "removed";
+			return {
+				ok: false,
+				message: gone
+					? `"${agent.name}" was removed from this team earlier and its name stays in the record — add a variant with another name`
+					: `"${agent.name}" is already a member`,
+			};
+		}
+		const wirings = input.mailboxes ?? [];
+		const duplicate = this.duplicateWiring(wirings);
+		if (duplicate) return { ok: false, message: duplicate };
+
+		const warnings: string[] = [];
+		const member = await this.spawnMember(agent, input.spec, warnings, true);
+		if (!member) {
+			return { ok: false, message: `${agent.name} was not added; the team is unchanged`, warnings };
+		}
+		member.addedAt = Date.now();
+		for (const wiring of wirings) {
+			warnings.push(...this.openChannel(wiring, this.isMultiWired(wiring.name, wirings)));
+		}
+		this.logAdded(member, "add_member");
+		const task = input.task?.trim() ?? "";
+		if (task !== "") this.startMember(member, task);
+		return {
+			ok: true,
+			message: `added ${member.name} on ${member.modelId}${task === "" ? " (idle, not started — its first message starts it)" : ""}. Existing members were not told of any new channels.`,
+			warnings,
+		};
+	}
+
+	/**
+	 * Remove a member from a live team. Refuses while it works or has pending
+	 * asks unless forced; force interrupts and auto-denies those asks with a
+	 * recorded note. The member stays on the roster as history, its channels
+	 * close with logs preserved, and it can still be rated.
+	 */
+	async removeMember(input: RemoveMemberInput): Promise<Ack> {
+		const member = this.members.get(input.member);
+		if (!member) return { ok: false, message: `no member named "${input.member}" — see team_list` };
+		if (member.state === "removed") return { ok: false, message: `${input.member} was already removed` };
+
+		const busy = member.state === "working" || member.state === "convening";
+		const asks = pendingAsks(this.recordPath!).filter((a) => a.member === member.name);
+		if (!input.force && (busy || asks.length > 0)) {
+			const why = [
+				busy ? `it is ${member.state}` : "",
+				asks.length > 0 ? `${asks.length} permission ask(s) are pending (${asks.map((a) => a.id).join(", ")})` : "",
+			].filter(Boolean);
+			return {
+				ok: false,
+				message: `${input.member} was not removed: ${why.join(" and ")}. Wait, resolve the asks, or pass force: true to interrupt it and deny its asks.`,
+			};
+		}
+
+		for (const ask of asks) {
+			appendResolution(this.recordPath!, {
+				ts: Date.now(),
+				id: ask.id,
+				approve: false,
+				by: "quartermaster",
+				note: `denied: ${member.name} was removed from the team`,
 			});
+		}
+		const session = member.session;
+		member.session = undefined;
+		member.state = "removed";
+		member.removedAt = Date.now();
+		member.removedReason = input.reason;
+		member.pendingDelivery = [];
+		const warnings: string[] = [];
+		if (session) {
+			try {
+				if (busy) await session.abort();
+			} catch (err) {
+				warnings.push(`interrupting ${member.name} failed: ${String(err)}`);
+			}
+			try {
+				session.dispose();
+			} catch (err) {
+				warnings.push(`disposing ${member.name} failed: ${String(err)}`);
+			}
+		}
+		for (const channel of this.channels.values()) {
+			if (channel.from === member.name || channel.to === member.name) channel.closed = true;
+		}
+		const rating = this.memberForRating(member.name);
+		appendComposition(this.recordPath!, {
+			type: "removed",
+			ts: member.removedAt,
+			member: member.name,
+			definition: member.agent.definition,
+			model: member.modelId,
+			dimensions: rating?.dimensions,
+			reason: input.reason,
+			forced: input.force ? true : undefined,
+			by: "quartermaster",
+		});
+		return {
+			ok: true,
+			message: `removed ${member.name}${asks.length ? `, denying ${asks.length} pending ask(s)` : ""}; its channels are closed and its record kept. rate_member still works for it.`,
+			warnings,
+		};
 	}
 
 	/**
@@ -482,6 +654,7 @@ export class Fleet {
 		const outbound: OpenChannel[] = [];
 		const inbound: OpenChannel[] = [];
 		for (const channel of this.channels.values()) {
+			if (channel.closed) continue;
 			if (channel.from === memberName) outbound.push(channel);
 			if (channel.to === memberName) inbound.push(channel);
 		}
@@ -527,12 +700,15 @@ export class Fleet {
 			model: m.modelId,
 			state: m.state,
 			note: m.note,
+			addedAt: m.addedAt,
+			removedAt: m.removedAt,
+			removedReason: m.removedReason,
 		}));
 		return {
 			convened: this.convened,
 			teamId: this.teamId,
 			members,
-			openMailboxes: [...this.channels.values()].map((c) => `${c.id} (${c.from} -> ${c.to})`),
+			openMailboxes: [...this.channels.values()].filter((c) => !c.closed).map((c) => `${c.id} (${c.from} -> ${c.to})`),
 			pendingAsks: this.recordPath ? pendingAsks(this.recordPath).length : 0,
 			unreadReports: this.recordPath ? readReports(this.recordPath).length : 0,
 			warnings: extraWarnings,
@@ -542,6 +718,7 @@ export class Fleet {
 	async dissolve(): Promise<TeamStatus> {
 		const warnings: string[] = [];
 		for (const member of this.members.values()) {
+			if (member.state === "removed") continue;
 			if (member.session) {
 				try {
 					member.session.dispose();
@@ -573,6 +750,7 @@ function assembleSpawnPrompt(
 	agent: AgentDef,
 	task: string,
 	channels: { outbound: OpenChannel[]; inbound: OpenChannel[] },
+	team: Array<{ name: string; description: string }> = [],
 ): string {
 	const lines = [
 		`You are ${memberName}, a member of a team convened by the Quartermaster.`,
@@ -586,6 +764,10 @@ function assembleSpawnPrompt(
 		"- Permission questions about actions outside your granted tools go to the Quartermaster via request-permission.",
 		"- Your task below is the whole of what the Quartermaster delegated. If it is incomplete or ambiguous, say so in a report instead of guessing.",
 	];
+	if (team.length > 0) {
+		lines.push("", "THE TEAM RIGHT NOW (besides you):");
+		for (const m of team) lines.push(`- ${m.name}: ${m.description}`);
+	}
 	if (channels.outbound.length > 0) {
 		lines.push("", "CHANNELS YOU CAN SEND THROUGH (with the send tool):");
 		for (const ch of channels.outbound) {

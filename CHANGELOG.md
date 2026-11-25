@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 ### Added
+- `add_member` and `remove_member`: change a live team without dissolving.
+  Adding draws one member under the usual gates (a failed draw leaves the
+  team unchanged), with an optional task (omit to add armed) and optional
+  `mailboxes`. Removing refuses while the member is working or has
+  pending asks; `force` interrupts it and denies the asks with a recorded
+  note. Removed members keep their place in the record (`team_list` shows
+  added/removed markers), their channels close with logs preserved, and
+  `rate_member` still works for them. Composition history is appended to
+  `composition.jsonl`. Later members' spawn prompts list the current team.
 - Agent `variants`: one file declares several addressable agents sharing the
   prompt and tools, each with its spec deep-merged over the file's
   (weights, temperature, filters). Each variant is drawn independently and

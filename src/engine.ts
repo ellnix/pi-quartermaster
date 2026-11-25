@@ -71,6 +71,23 @@ export interface ConveneMailboxInput {
 	to: string;
 }
 
+export interface AddMemberInput {
+	/** Agent or variant name. */
+	agent: string;
+	spec?: SpecOverrideInput;
+	/** Optional: omit or "" to add the member armed (idle, not started). */
+	task?: string;
+	/** Channels to open, extending the graph; existing wiring is untouched. */
+	mailboxes?: ConveneMailboxInput[];
+}
+
+export interface RemoveMemberInput {
+	member: string;
+	reason?: string;
+	/** Interrupt a working member and deny its pending asks, then remove. */
+	force?: boolean;
+}
+
 export interface ConveneInput {
 	members: ConveneMemberInput[];
 	/** The team's relationship graph: channels to open, with endpoints. */
@@ -85,12 +102,17 @@ export interface MemberStatus {
 	description: string;
 	spec?: string;
 	model?: string;
+	/** Set on members added mid-flight (add_member). */
+	addedAt?: number;
+	/** Set once removed; the member stays on the roster as history. */
+	removedAt?: number;
+	removedReason?: string;
 	/**
 	 * A union of string literals rather than an enum: the TypeScript
 	 * idiom. It is compile-time-checked everywhere the value is read or
 	 * written, serializes as plain strings, and adds no runtime object.
 	 */
-	state: "convening" | "unstarted" | "working" | "idle" | "dissolved" | "error";
+	state: "convening" | "unstarted" | "working" | "idle" | "removed" | "dissolved" | "error";
 	note?: string;
 }
 
@@ -204,6 +226,8 @@ export interface QuartermasterEngine {
 	pendingAsks(): Promise<PendingAsk[]>;
 	resolveAsk(input: ResolveAskInput): Promise<Ack>;
 	dissolve(): Promise<TeamStatus>;
+	addMember(input: AddMemberInput): Promise<Ack>;
+	removeMember(input: RemoveMemberInput): Promise<Ack>;
 	/**
 	 * The active team's record directory and wake policy, or null when no team
 	 * is convened. Synchronous on purpose: it is read after every convene and
@@ -262,6 +286,14 @@ export class NotConfiguredEngine implements QuartermasterEngine {
 
 	async dissolve(): Promise<TeamStatus> {
 		return this.team("nothing to dissolve");
+	}
+
+	async addMember(input: AddMemberInput): Promise<Ack> {
+		return this.ack(`no convened team — convene before adding ${input.agent}`);
+	}
+
+	async removeMember(input: RemoveMemberInput): Promise<Ack> {
+		return this.ack(`no convened team — nothing to remove ${input.member} from`);
 	}
 
 	wakeSource(): WakeSource | null {

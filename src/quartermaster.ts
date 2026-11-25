@@ -37,6 +37,8 @@ import {
 	type ResolveAskInput,
 	type SetCostInput,
 	type SetOverrideInput,
+	type AddMemberInput,
+	type RemoveMemberInput,
 	type RateInput,
 	type TeamStatus,
 } from "./engine.ts";
@@ -60,7 +62,13 @@ function teamText(status: TeamStatus): { content: { type: "text"; text: string }
 	} else {
 		lines.push(`Team ${status.teamId ?? "?"} — ${status.members.length} member(s).`);
 		for (const m of status.members) {
-			lines.push(`- ${m.name}${m.definition ? ` (${m.definition})` : ""} [${m.state === "unstarted" ? "idle (not started)" : m.state}] ${m.model ? `on ${m.model}` : "(no model drawn)"} — ${m.description}${m.note ? ` (${m.note})` : ""}`);
+			const stamp = (t?: number) => (t ? new Date(t).toISOString() : "");
+			const marker = m.removedAt
+				? ` removed ${stamp(m.removedAt)}${m.removedReason ? `: ${m.removedReason}` : ""}`
+				: m.addedAt
+					? ` added ${stamp(m.addedAt)}`
+					: "";
+			lines.push(`- ${m.name}${m.definition ? ` (${m.definition})` : ""} [${m.state === "unstarted" ? "idle (not started)" : m.state}${marker}] ${m.model ? `on ${m.model}` : "(no model drawn)"} — ${m.description}${m.note ? ` (${m.note})` : ""}`);
 		}
 		if (status.openMailboxes.length) {
 			lines.push(`Open mailboxes: ${status.openMailboxes.join(", ")}`);
@@ -90,6 +98,28 @@ function channelText(result: ReadChannelResult): { content: { type: "text"; text
 	for (const w of result.warnings) lines.push(`warning: ${w}`);
 	return text(lines.length ? lines.join("\n") : `No traffic on ${result.channel}.`);
 }
+
+const SPEC_OVERRIDE = Type.Object(
+							{
+								weights: Type.Record(Type.String(), Type.Number(), {
+									description: "Dimension weights; suitability = dot product with a model's scores.",
+								}),
+								temperature: Type.Optional(Type.Number({ minimum: 0, maximum: 5, description: "Softmax temperature, 0 (deterministic) to 5." })),
+								filters: Type.Optional(
+									Type.Object({
+										require: Type.Optional(Type.Array(Type.String(), { description: "Input modalities a candidate must support." })),
+										minCostScore: Type.Optional(Type.Number({ minimum: 0, maximum: 1, description: "Minimum cost score (1 = cheapest)." })),
+										minScores: Type.Optional(
+											Type.Record(Type.String(), Type.Number({ minimum: 0, maximum: 1 }), {
+												description: "Minimum deterministic score per dimension — candidates below the bar are excluded before the draw.",
+											}),
+										),
+										allowUnrated: Type.Optional(Type.Boolean({ description: "Let unrated models into the pool." })),
+									}),
+								),
+							},
+							{ description: "A spec built on the fly, overriding the agent's own for this deployment." },
+);
 
 export default function quartermaster(pi: ExtensionAPI): void {
 	// Child sessions created by the fleet load this extension too. Stay inert:
@@ -166,29 +196,7 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			members: Type.Array(
 				Type.Object({
 					agent: Type.String({ description: "Agent definition name (from the agent dir: team/agents/, or the project .pi/agents/)." }),
-					spec: Type.Optional(
-						Type.Object(
-							{
-								weights: Type.Record(Type.String(), Type.Number(), {
-									description: "Dimension weights; suitability = dot product with a model's scores.",
-								}),
-								temperature: Type.Optional(Type.Number({ minimum: 0, maximum: 5, description: "Softmax temperature, 0 (deterministic) to 5." })),
-								filters: Type.Optional(
-									Type.Object({
-										require: Type.Optional(Type.Array(Type.String(), { description: "Input modalities a candidate must support." })),
-										minCostScore: Type.Optional(Type.Number({ minimum: 0, maximum: 1, description: "Minimum cost score (1 = cheapest)." })),
-										minScores: Type.Optional(
-											Type.Record(Type.String(), Type.Number({ minimum: 0, maximum: 1 }), {
-												description: "Minimum deterministic score per dimension — candidates below the bar are excluded before the draw.",
-											}),
-										),
-										allowUnrated: Type.Optional(Type.Boolean({ description: "Let unrated models into the pool." })),
-									}),
-								),
-							},
-							{ description: "A spec built on the fly, overriding the agent's own for this deployment." },
-						),
-					),
+					spec: Type.Optional(SPEC_OVERRIDE),
 					task: Type.Optional(Type.String({ description: "The initial task for this member. Self-contained enough to start from. Omit or \"\" to convene idle (not started); the first message_member starts it. Whitespace-only is an error." })),
 				}),
 				{ minItems: 1 },
@@ -331,6 +339,49 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			steer: Type.Optional(Type.Boolean({ description: "True: interrupt the member's current run and steer it. False (default): queue as a follow-up." })),
 		}),
 		execute: async (_id, params: MessageInput, _sig, _up, ctx) => ackText(await getEngine(ctx).message(params)),
+	});
+
+	pi.registerTool({
+		name: "add_member",
+		label: "Add member",
+		description:
+			"Add a member to the live team: one draw now under the agent's (or variant's) spec, " +
+			"the same gates as convening. A failed draw leaves the team unchanged. The task may be " +
+			"omitted to add the member armed (idle, not started; its first message starts it). " +
+			"mailboxes extends the channel graph; existing wiring is untouched, and members already " +
+			"running are not told about new channels. Logged in the record's composition history.",
+		parameters: Type.Object({
+			agent: Type.String({ description: "Agent or variant name." }),
+			spec: Type.Optional(SPEC_OVERRIDE),
+			task: Type.Optional(Type.String({ description: "Initial task. Omit or \"\" to add idle. Whitespace-only is an error." })),
+			mailboxes: Type.Optional(
+				Type.Array(
+					Type.Object({
+						name: Type.String({ description: "Mailbox template name." }),
+						from: Type.String({ description: "Sender member." }),
+						to: Type.String({ description: "Recipient member." }),
+					}),
+					{ description: "Channels to open for the new member, with endpoints." },
+				),
+			),
+		}),
+		execute: async (_id, params: AddMemberInput, _sig, _up, ctx) => ackText(await getEngine(ctx).addMember(params)),
+	});
+
+	pi.registerTool({
+		name: "remove_member",
+		label: "Remove member",
+		description:
+			"Remove a member from the live team. Refuses while the member is working or has pending " +
+			"permission asks, reporting its state; force: true interrupts it and denies the asks with " +
+			"a recorded note. Its channels close, its logs and reports stay readable, it stays in the " +
+			"record as removed, and rate_member still works for it - rate it, or its evidence is lost.",
+		parameters: Type.Object({
+			member: Type.String({ description: "Team member name (from team_list)." }),
+			reason: Type.Optional(Type.String({ description: "Why, recorded in the composition history." })),
+			force: Type.Optional(Type.Boolean({ description: "Interrupt a working member and deny its pending asks." })),
+		}),
+		execute: async (_id, params: RemoveMemberInput, _sig, _up, ctx) => ackText(await getEngine(ctx).removeMember(params)),
 	});
 
 	pi.registerTool({

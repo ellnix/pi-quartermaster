@@ -13,6 +13,13 @@
   draw. `priorStrength: 1` is the closest to the old behaviour. `minScores`
   gates are unchanged.
 
+### Changed
+- Crewmen are told what their mailboxes are for: they are sanctioned by the
+  Quartermaster, using them lightens its load, and the recipient already
+  knows the sender, so no introductions are needed. The statement appears
+  in the member's standing instructions (whenever it has an outbound
+  channel) and in the `send` tool description.
+
 ### Added
 - `open_mailbox` and `close_mailbox`: manage channels on a live team,
   separately from `add_member`. Closing is the quartermaster's first admin

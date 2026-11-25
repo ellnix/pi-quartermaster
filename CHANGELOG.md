@@ -1,6 +1,18 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- Ratings now refine your scores instead of replacing them. A `models.yaml`
+  score (or override) is a beta prior worth `k` pseudo-trials
+  (`matching.priorStrength` in `authority.jsonc`, default 6; per-model
+  `prior_strength` in `models.yaml`). One strong rating can no longer drop a
+  model below its prior or flatten models with different priors; the prior
+  fades as evidence accrues. Dimensions you never scored keep the old
+  Beta(1,1) start. Existing `evidence.json` needs no migration: counts are
+  re-anchored when read, so editing a score or `k` takes effect on the next
+  draw. `priorStrength: 1` is the closest to the old behaviour. `minScores`
+  gates are unchanged.
+
 ### Added
 - `open_mailbox` and `close_mailbox`: manage channels on a live team,
   separately from `add_member`. Closing is the quartermaster's first admin

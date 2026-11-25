@@ -267,6 +267,15 @@ anthropic/claude-opus-4-8:
   There is no per-spec opt-out; teams that want pure quality draws set
   `matching.costLambda` (0 restores the pre-0.2.0 distribution) in
   `authority.jsonc`.
+- **Evidence refines the user's score; it does not replace it.** A
+  `models.yaml` score (or override) is the beta prior, worth `k`
+  pseudo-trials: `Beta(score·k, (1−score)·k)`, with `k` from
+  `matching.priorStrength` (default 6) or the model's `prior_strength`.
+  A single rating moves the estimate but cannot invert a considered
+  prior, and distinct priors stay distinct after one trial each; the
+  prior fades as real evidence accrues. Dimensions the user never scored
+  start at Beta(1,1). Stored counts keep the Beta(1,1) baseline and the
+  prior is swapped in at read time, so old evidence needs no migration.
 - **Ratings are outcome-shaped.** `team rate` takes a 0–1 outcome per
   (model, dimension) and updates a posterior. One bad day moves a model
   a little; a pattern moves it a lot; temperature keeps drawing down-
@@ -358,7 +367,7 @@ privilege-escalation path. User config carries a **quartermaster
 authority** section: categories it may approve alone (reads, tests,
 builds) versus categories it must always escalate (destructive shell,
 network, credentials, writes outside the worktree). The same file's
-optional `matching` section tunes the draw (`costLambda`); absent
+optional `matching` section tunes the draw (`costLambda`, `priorStrength`); absent
 sections mean the documented defaults.
 
 ---

@@ -111,7 +111,7 @@ const evidence = loadEvidence();
 
 /** A config with the cost penalty tuned — the same team, a different policy. */
 function withLambda(lambda: number): QuartermasterConfig {
-	return { ...config, authority: { ...config.authority, matching: { costLambda: lambda } } };
+	return { ...config, authority: { ...config.authority, matching: { ...config.authority.matching, costLambda: lambda } } };
 }
 
 // --- Specs, built the two ways a quartermaster builds them: in memory.

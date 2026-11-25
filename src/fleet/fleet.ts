@@ -852,6 +852,11 @@ function assembleSpawnPrompt(
 		for (const ch of channels.outbound) {
 			lines.push(`- ${ch.id} -> ${ch.to}`);
 		}
+		lines.push(
+			"These mailboxes are sanctioned by the Quartermaster: you are expected to use them, and doing so lightens its load. " +
+				"When you need a clarification, a finding relayed, or context a crewmate holds, send it straight to them rather than waiting on the Quartermaster or guessing. " +
+				"The recipient already knows who you are and is ready for your messages; do not introduce yourself, just say what you need.",
+		);
 	}
 	if (channels.inbound.length > 0) {
 		lines.push("", "CHANNELS THAT MAY DELIVER TO YOU:");

@@ -133,14 +133,19 @@ export function crewmanTools(memberName: string, recordPath: string, hooks: Crew
 			name: "send",
 			label: "Send via mailbox",
 			description:
-				"Send a message to another member through one of your open mailboxes. The " +
-				"engine frames and logs the delivery, and the Quartermaster sees all traffic. " +
-				"A tracking number is echoed back to you and can be cited when the " +
-				"Quartermaster steers you. Your task lists your channels by name and " +
-				"recipient; anything beyond that about a channel is not your concern.",
-			promptSnippet: "Send messages to other members through your open mailboxes with send.",
+				"Send a message to a crewmate through one of your open mailboxes. Mailboxes are " +
+				"sanctioned by the Quartermaster and you are expected to use them: talking " +
+				"directly to your crewmates lightens the Quartermaster's load, so prefer this " +
+				"to guessing or routing a question through a report. The recipient already " +
+				"knows who you are and is ready to accept your message - do not introduce " +
+				"yourself, just say what you need. The engine frames and logs the delivery, " +
+				"and the Quartermaster sees all traffic. A tracking number is echoed back to " +
+				"you and can be cited when the Quartermaster steers you. Your instructions " +
+				"list your channels by name and recipient; anything beyond that about a " +
+				"channel is not your concern.",
+			promptSnippet: "Message crewmates directly through your sanctioned mailboxes with send - no introductions needed.",
 			parameters: Type.Object({
-				mailbox: Type.String({ description: "The mailbox name from your task's channels list." }),
+				mailbox: Type.String({ description: "The mailbox name from your channels list." }),
 				body: Type.String({ description: "The message body." }),
 			}),
 			async execute(

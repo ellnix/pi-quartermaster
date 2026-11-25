@@ -1,6 +1,14 @@
 # Changelog
 
 ## [0.3.0]
+### Added
+- One agent definition can be launched several times under different names:
+  `convene_team` members and `add_member` take an optional `name`
+  (`builder` as `builder-a` and `builder-b`). Each is its own member with
+  its own draw, worktree, channels and rating; `team_list` shows
+  `builder-a (from builder)`. Per-launch stance comes from the convene's
+  `spec` override.
+
 ### Fixed
 - A member that asks a question can now be answered: every send tells the
   sender whether the recipient has a mailbox back, and names it, so a
@@ -86,11 +94,6 @@
   added/removed markers), their channels close with logs preserved, and
   `rate_member` still works for them. Composition history is appended to
   `composition.jsonl`. Later members' spawn prompts list the current team.
-- Agent `variants`: one file declares several addressable agents sharing the
-  prompt and tools, each with its spec deep-merged over the file's
-  (weights, temperature, filters). Each variant is drawn independently and
-  rated on its own; `team_list` shows `builder-cheap (builder)`. No
-  `variants` block behaves exactly as before.
 - One mailbox template can back many wirings. A template wired once keeps
   its channel name and log; wired more than once, each pairing gets
   channel `<template>__<from>--<to>` with an isolated log. `read_channel`

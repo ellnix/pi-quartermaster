@@ -166,13 +166,14 @@ export class Fleet {
 		ensureRecord(this.recordPath);
 
 		for (const request of input.members) {
-			const agent = this.config.agents.get(request.agent);
-			if (!agent) {
-				warnings.push(`agent "${request.agent}" is not defined — member skipped (see team_list for configured agents)`);
+			const resolved = this.resolveAgent(request.agent, request.name);
+			if (!resolved.ok) {
+				warnings.push(`${resolved.error} — member skipped`);
 				continue;
 			}
+			const agent = resolved.agent;
 			if (this.members.has(agent.name)) {
-				warnings.push(`member "${agent.name}" listed twice — second occurrence skipped`);
+				warnings.push(`member "${agent.name}" listed twice — second occurrence skipped (give it a distinct \`name\` to launch the same agent again)`);
 				continue;
 			}
 			const member = await this.spawnMember(agent, request.spec, request, warnings);
@@ -194,6 +195,28 @@ export class Fleet {
 		}
 
 		return this.status(warnings);
+	}
+
+	/**
+	 * The agent to spawn, under the name it will go by in this team. The same
+	 * definition can be launched any number of times under different names: the
+	 * copy shares the definition's prompt, tools and spec, and `definition`
+	 * keeps the lineage. Names are validated because they end up in branch
+	 * names, channel ids and report attribution.
+	 */
+	private resolveAgent(agentName: string, asName?: string): { ok: true; agent: AgentDef } | { ok: false; error: string } {
+		const base = this.config.agents.get(agentName);
+		if (!base) return { ok: false, error: `agent "${agentName}" is not defined (see team_list for configured agents)` };
+		if (asName === undefined) return { ok: true, agent: base };
+		const name = asName.trim();
+		if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) || name.includes("--") || name.includes("__") || name.length > 48) {
+			return {
+				ok: false,
+				error: `name "${asName}" is not usable: start with a letter or digit, then letters, digits, ".", "_" or "-" (no "--" or "__"), at most 48 characters`,
+			};
+		}
+		if (name === "quartermaster") return { ok: false, error: `name "quartermaster" is reserved` };
+		return { ok: true, agent: { ...base, name } };
 	}
 
 	/** A message when the batch wires one template to the same endpoints twice, or reopens an open wiring. */
@@ -675,15 +698,16 @@ export class Fleet {
 		if (input.task !== undefined && input.task !== "" && input.task.trim() === "") {
 			return { ok: false, message: `task is whitespace-only — give a real task, or omit it / pass "" to add ${input.agent} idle` };
 		}
-		const agent = this.config.agents.get(input.agent);
-		if (!agent) return { ok: false, message: `agent "${input.agent}" is not defined — see team_list for configured agents` };
+		const resolved = this.resolveAgent(input.agent, input.name);
+		if (!resolved.ok) return { ok: false, message: resolved.error };
+		const agent = resolved.agent;
 		if (this.members.has(agent.name)) {
 			const gone = this.members.get(agent.name)!.state === "removed";
 			return {
 				ok: false,
 				message: gone
-					? `"${agent.name}" was removed from this team earlier and its name stays in the record — add a variant with another name`
-					: `"${agent.name}" is already a member`,
+					? `"${agent.name}" was removed from this team earlier and its name stays in the record — add it again under another \`name\``
+					: `"${agent.name}" is already a member — give this one a distinct \`name\` to launch ${input.agent} again`,
 			};
 		}
 		const wirings = input.mailboxes ?? [];

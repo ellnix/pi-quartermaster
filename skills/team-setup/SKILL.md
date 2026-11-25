@@ -45,27 +45,12 @@ The user's answers, not defaults, decide the team.
    You are a code reviewer. Load the repo's code-review skill and follow it.
    ```
 
-   **Variants.** One file can declare several addressable agents that
-   share the prompt and tools but differ in stance — for racing two
-   implementations, a second-opinion reviewer, or a cheap and a thorough
-   instance of one role:
-
-   ```yaml
-   variants:
-     builder: {}                                  # inherits the spec
-     builder-cheap: { weights: { cost: 0.7 } }    # deep-merged over spec
-     builder-independent: { temperature: 0.9 }
-   ```
-
-   A variant may override `weights`, `temperature` and `filters`
-   (merged key by key over the file's `spec`); anything else warns and is
-   ignored. Each variant is drawn independently, is its own member with
-   its own session, channels and rating, and shows in `team_list` as
-   `builder-cheap (builder)`. Use them only when the instructions are the
-   same and the model economics differ; otherwise write separate files.
-   No `variants` block means one agent named after the file. Variants
-   should name the variants, not rely on positions: if the file's own
-   `name` should stay addressable, list it too.
+   **One definition, many crewmen.** Do not write a second file to get a
+   second instance of a role. The same agent can be launched several times
+   under different names when convening (`name` on a `convene_team` member
+   or on `add_member`): same prompt and tools, each with its own draw,
+   worktree and rating. Per-launch stance goes in the convene's `spec`
+   override. Write separate files only when the instructions differ.
 
    `worktree:` (optional) says where the agent works: `per-member` (its
    own git worktree and branch; the default for any agent granted `edit`

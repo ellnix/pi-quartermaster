@@ -221,11 +221,12 @@ report its own errors. Invariants: the primary tree's HEAD, index and
 branch are never touched; nothing is pushed; uncommitted work and
 branches with commits are never destroyed silently.
 
-Agent definitions likewise: a file may declare `variants`, each an
-addressable agent sharing the file's prompt and tools, with its spec
-deep-merged over the file's. Variants expand at load time, so everything
-downstream (draws, sessions, ratings) sees ordinary agents; `definition`
-records the lineage.
+Agent definitions are launched by name, not by file: `convene_team` and
+`add_member` take an optional `name`, so one definition can be launched
+any number of times as distinct crewmen. Each is its own member (own
+draw, session, worktree, channels, rating), sharing the definition's
+prompt, tools and spec; `definition` records the lineage. A convene's
+`spec` override gives each launch its own stance.
 
 The preamble is constitutional text: relationship framing that cannot
 live in a skill (skills say *how* to review; the channel says what this

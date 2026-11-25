@@ -198,6 +198,42 @@ void scoutS;
 	ok("no trust API: unchanged behaviour", mk(undefined).untrustedSetup === false);
 }
 
+// One definition, many crewmen: the same agent launched under different names.
+{
+	const spawned: string[] = [];
+	fleet.spawnMember = async (agent: any) => {
+		spawned.push(`${agent.name}<-${agent.definition}`);
+		const member = { name: agent.name, agent, spec: agent.spec, modelId: `p/${agent.name}`, session: stubSession(agent.name), state: "unstarted", pendingDelivery: [], notices: [] };
+		fleet.members.set(agent.name, member);
+		return member;
+	};
+	config.agents.set("racer", def("racer", spec));
+	const a = await fleet.addMember({ agent: "racer", name: "racer-a" });
+	const b = await fleet.addMember({ agent: "racer", name: "racer-b", spec: { weights: { cost: 0.9 } } });
+	ok("the same agent can be added twice under different names", a.ok && b.ok && fleet.members.has("racer-a") && fleet.members.has("racer-b"));
+	ok("each keeps its lineage and its own name", fleet.members.get("racer-a").agent.definition === "racer" && fleet.members.get("racer-b").agent.name === "racer-b");
+	ok("the definition itself is untouched", config.agents.get("racer").name === "racer");
+	const status = fleet.status().members.find((m: any) => m.name === "racer-a");
+	ok("team_list shows the lineage", status.definition === "racer");
+	ok("the original name is still free", (await fleet.addMember({ agent: "racer" })).ok);
+	const dup = await fleet.addMember({ agent: "racer", name: "racer-a" });
+	ok("a taken name is refused with the way out", !dup.ok && dup.message.includes("distinct `name`"));
+	for (const bad of ["", "a b", "x/y", "-x", "a--b", "a__b", "quartermaster", "x".repeat(49)]) {
+		const r = await fleet.addMember({ agent: "racer", name: bad });
+		ok(`unusable name ${JSON.stringify(bad.slice(0, 12))} is refused`, !r.ok && /not usable|reserved/.test(r.message));
+	}
+	ok("an unknown agent is refused even with a name", !(await fleet.addMember({ agent: "nope", name: "n1" })).ok);
+	const before = fleet.members.size;
+	const warn: string[] = [];
+	// convene path: resolveAgent is shared, so check it directly for the name rules
+	const r1 = fleet.resolveAgent("racer", "conv-a");
+	ok("convene resolves a renamed copy of the definition", r1.ok && r1.agent.name === "conv-a" && r1.agent.definition === "racer" && r1.agent.systemPrompt === config.agents.get("racer").systemPrompt);
+	ok("and does not mutate the original", config.agents.get("racer").name === "racer" && before === fleet.members.size && warn.length === 0);
+	// worktree branches are per name
+	const { branchFor } = await import("../src/fleet/worktrees.ts");
+	ok("branches and channel ids derive from the name", branchFor("t1", "racer-a") !== branchFor("t1", "racer-b"));
+}
+
 // Dissolution skips removed sessions and leaves nothing running.
 log.length = 0;
 await fleet.dissolve();

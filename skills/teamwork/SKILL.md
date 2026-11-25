@@ -25,9 +25,10 @@ Standing orders for the quartermaster.
 
 ## Changing the team mid-flight
 
-- `add_member` draws one new member into the live team (an agent or
-  variant name; the task may be omitted to add it armed). Use it when
-  scope grows, a specialist is needed, or a variant should race. It
+- `add_member` draws one new member into the live team (an agent name,
+  optionally launched under another `name`; the task may be omitted to
+  add it armed). Use it when scope grows, a specialist is needed, or a
+  second copy of an agent should race. It
   takes an optional `mailboxes` list for the new member's channels;
   members already running hear of them at their next message.
   A failed draw leaves the team untouched. Channels are managed
@@ -43,7 +44,7 @@ Standing orders for the quartermaster.
   `rate_member` still works on a removed member, but an unrated removal
   loses its evidence.
 - Prefer these over dissolve and reconvene, which re-draws everyone.
-  A removed name stays in the record; add a variant with another name.
+  A removed name stays in the record; launch the agent again under another `name`.
 
 ## Convening
 
@@ -222,7 +223,9 @@ user's tree.
   first). It sees the tree and cannot dirty it: attach is refused for any
   agent granted `edit` or `write`. Tell it to wait for the builder's
   report, since it sees only what is on disk.
-- **Racing**: two builders (variants of one file) get two branches. When
+- **Racing**: launch one builder definition twice under different names
+  (`{"agent": "<builder>", "name": "builder-a"}` and `builder-b`; give each
+  its own `spec` override if their draws should differ). They get two branches. When
   both report, compare branches, not trees:
   `git diff <base>...quartermaster/<team>/<a>` against `<b>`. Keep the
   winner (merge it yourself; members never push) and `remove_member` the

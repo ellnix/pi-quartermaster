@@ -55,6 +55,14 @@ export interface ConveneMemberInput extends WorkspaceInput {
 	/** Agent definition name (the `name` in an agent .md file). */
 	agent: string;
 	/**
+	 * The name this crewman goes by in the team. Defaults to the agent's own
+	 * name. Give distinct names to launch several crewmen from one definition
+	 * (`builder` as `builder-a` and `builder-b`): same prompt and tools, each
+	 * drawn, placed, reported and rated on its own. Letters, digits, `.`, `_`
+	 * and `-`; no `--` or `__`, which channel ids use as separators.
+	 */
+	name?: string;
+	/**
 	 * Overrides the agent's spec for this deployment, built on the fly.
 	 * Reusable specs are attached to agent definitions; an override that
 	 * must be named is a spec that belongs in a file, not here.
@@ -91,8 +99,10 @@ export interface ConveneMailboxInput {
 }
 
 export interface AddMemberInput extends WorkspaceInput {
-	/** Agent or variant name. */
+	/** Agent definition name. */
 	agent: string;
+	/** The name this crewman goes by in the team; see ConveneMemberInput.name. */
+	name?: string;
 	spec?: SpecOverrideInput;
 	/** Optional: omit or "" to add the member armed (idle, not started). */
 	task?: string;
@@ -140,7 +150,7 @@ export interface ConveneInput {
 export interface MemberStatus {
 	/** Member name in this team (the agent definition name). */
 	name: string;
-	/** The agent definition (file) this member came from, when it is a variant. */
+	/** The agent definition (file) this member came from, when it was launched under another name. */
 	definition?: string;
 	description: string;
 	spec?: string;

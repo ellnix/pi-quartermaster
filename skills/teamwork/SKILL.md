@@ -68,6 +68,118 @@ Standing orders for the quartermaster.
    business-logic reviewer reading the task text against the diff;
    view/CSS changes → the designer with screenshots.
 
+## Worked examples
+
+All of these features exist today: armed convene (empty `task`),
+one template wired to many pairings, and `add_member` / `open_mailbox`
+mid-flight. Agent files are authored per [agent-files.md](agent-files.md).
+Arguments are real `convene_team` shapes; adapt the task text.
+
+### 1. One member, the minimum viable convene
+
+```json
+{ "members": [{ "agent": "builder", "task":
+  "Branch `fix/invoice-rounding` (already checked out). In app/services/invoice_total.rb, round line totals half-even to 2 places before summing; today the sum is rounded once at the end (see the failing spec spec/services/invoice_total_spec.rb:41). Do not touch app/models. Commit as `fix: round invoice lines half-even` (one commit). Run `bundle exec rspec spec/services` and make it pass. Done = that suite green and a report with the diff summary. If the spec contradicts the code in a way you cannot resolve, report blocked instead of guessing." }] }
+```
+
+Why each part: the **branch** and the **file** are what a member cannot
+guess; a **boundary** ("do not touch ...") stops scope creep; the
+**commit convention** and **test command** spare a round trip;
+**done = ...** is what you rate against. A task that cannot name these
+is not ready: ask the user or the scout first.
+
+### 2. A pair: builder and reviewer
+
+```json
+{ "members": [
+    { "agent": "builder",  "task": "<complete build task, as in example 1>" },
+    { "agent": "reviewer", "task": "Review the builder's work on `fix/invoice-rounding`. First write your risk list (what could go wrong with half-even rounding on this code path: negative lines, zero quantity, currency with no minor units). Then review the diff against it once the builder reports. Send findings to the builder on your mailbox; do not wait for me to relay." } ],
+  "mailboxes": [
+    { "name": "builder-to-reviewer", "from": "builder",  "to": "reviewer" },
+    { "name": "reviewer-to-builder", "from": "reviewer", "to": "builder" } ] }
+```
+
+The loop that makes the pair cheaper than two independent reviews: the
+reviewer writes findings straight to the builder on
+`reviewer-to-builder`; the builder replies with fixes or questions on
+`builder-to-reviewer`; you only read the log and the final reports.
+Without the second mailbox findings never reach the person who must fix
+them.
+
+### 3. A trio with a scout (scout-first)
+
+The pattern proven live: **convene everyone at once, let the scout dig
+while you ask the user the decision questions, then compose the
+builder's real task from the map and the answers.**
+
+```json
+{ "members": [
+    { "agent": "scout",    "task": "Map how invoice totals are computed: entry points, every place a line total or the sum is rounded, the specs that cover it. Report exact paths with line numbers and facts only; no proposals." },
+    { "agent": "builder" },
+    { "agent": "reviewer" } ],
+  "mailboxes": [
+    { "name": "builder-to-reviewer", "from": "builder",  "to": "reviewer" },
+    { "name": "reviewer-to-builder", "from": "reviewer", "to": "builder" },
+    { "name": "request-scouting",    "from": "builder",  "to": "scout" },
+    { "name": "request-scouting",    "from": "reviewer", "to": "scout" },
+    { "name": "scout-to-builder",    "from": "scout",    "to": "builder" },
+    { "name": "scout-to-reviewer",   "from": "scout",    "to": "reviewer" } ] }
+```
+
+Builder and reviewer have no task: they convene **armed** (idle, not
+started, no tokens), so there is no "stand by" warmup. One template
+(`request-scouting`) backs both asks to the scout. Then, in order:
+
+1. While the scout digs, ask the user the questions that change the
+   design (rounding mode, back-compat for stored totals). Do not read
+   the codebase yourself.
+2. When the scout reports, `message_member` the **reviewer** first: the
+   map is its risk-list input. It starts on that message.
+3. Compose the builder's task from the scout's map (cite paths and line
+   numbers) plus the user's answers, in the shape of example 1, and send
+   it with `message_member`. That starts the builder.
+4. Rate scout, builder and reviewer when they return.
+
+The two rules: **ask the scout instead of grepping the repo yourself**
+(the biggest context saver you have), and **ask the user the decision
+questions while the scout digs**, never after it finishes.
+
+### 4. Specialists
+
+Add each when the work needs it; do not convene them by default.
+
+```json
+{ "agent": "designer", "task": "Compare the attached screenshots against the mockup; list concrete discrepancies." }
+```
+`designer` carries `filters.require: [image, text]`, so the draw only
+considers vision models. Use it when a diff touches what the user sees.
+
+```json
+{ "agent": "researcher", "task": "Which of gem A or B supports half-even rounding with BigDecimal on Ruby 3.3? Cite sources; say what you verified." }
+```
+Research is outside the repo: a `researcher` (with the `request-research`
+mailbox), not the scout's read-only dig.
+
+```json
+{ "agent": "reviewer-frontier", "spec": { "weights": { "review": 1.0 }, "filters": { "minScores": { "review": 0.85 } } }, "task": "..." }
+```
+For auth, tenant-scoping or money-adjacent diffs: a score floor
+(`minScores`) is a requirement; a higher weight is only a tilt. A spec
+override here is for this deployment only; make it permanent in the file.
+Mid-flight: `add_member` with the same arguments, then `open_mailbox` to
+wire it in.
+
+## Anti-patterns
+
+| Don't | Because |
+|---|---|
+| Convene before the spec exists | Members improvise, or you spend a run on a warmup; convene armed and start when ready |
+| Task: "explore the repo and work out how to do X" | You pay a builder for what a scout maps cheaper |
+| Research the codebase in your own context | Context flood and shallower coverage than a dedicated dig |
+| Convene a pair with no mailboxes | Findings never reach whoever must fix them |
+| Skip the ratings | Evidence is lost and the next draw is uninformed (see Ratings) |
+| Dissolve and reconvene to add one specialist | Every draw is lost; use `add_member` |
+
 ## While the team works
 
 - **Clarifications flow through mailboxes; reports flow to you.** Relay

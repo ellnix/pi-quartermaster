@@ -14,6 +14,10 @@
   gates are unchanged.
 
 ### Added
+- teamwork skill: worked examples (single member, builder+reviewer pair,
+  scout-first trio, specialists) with real `convene_team` arguments and the
+  anti-patterns each avoids, plus `skills/teamwork/agent-files.md`, a
+  field-by-field agent file reference with a prompt-body skeleton.
 - `open_mailbox` and `close_mailbox`: manage channels on a live team,
   separately from `add_member`. Closing is the quartermaster's first admin
   lever: delivery stops at once, the log is kept, and `open_mailbox`

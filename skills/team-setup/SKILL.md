@@ -45,6 +45,28 @@ The user's answers, not defaults, decide the team.
    You are a code reviewer. Load the repo's code-review skill and follow it.
    ```
 
+   **Variants.** One file can declare several addressable agents that
+   share the prompt and tools but differ in stance — for racing two
+   implementations, a second-opinion reviewer, or a cheap and a thorough
+   instance of one role:
+
+   ```yaml
+   variants:
+     builder: {}                                  # inherits the spec
+     builder-cheap: { weights: { cost: 0.7 } }    # deep-merged over spec
+     builder-independent: { temperature: 0.9 }
+   ```
+
+   A variant may override `weights`, `temperature` and `filters`
+   (merged key by key over the file's `spec`); anything else warns and is
+   ignored. Each variant is drawn independently, is its own member with
+   its own session, channels and rating, and shows in `team_list` as
+   `builder-cheap (builder)`. Use them only when the instructions are the
+   same and the model economics differ; otherwise write separate files.
+   No `variants` block means one agent named after the file. Variants
+   should name the variants, not rely on positions: if the file's own
+   `name` should stay addressable, list it too.
+
    Rules: `tools` is the pre-approved surface — grant `edit` and `write`
    only to builders; absence means read-only defaults. Every agent needs
    a spec (inline in frontmatter — weights, temperature, filters) or a
@@ -75,7 +97,11 @@ The user's answers, not defaults, decide the team.
    decides who talks to whom. Preambles may reference `${from}` and
    `${to}`, which the engine substitutes at delivery, so role-voiced
    text stays truthful under any wiring. Adversarial review pairs
-   should say so explicitly.
+   should say so explicitly. One template can back any number of
+   pairings (`builder -> scout` and `reviewer -> scout` from the same
+   file), so write one generic template per relationship kind, not one
+   per pair. Wiring the same template with the same endpoints twice is
+   an error.
 6. **Optionally write `team/authority.jsonc`** — which tool categories
    the quartermaster may approve alone versus which always escalate, plus
    the optional `matching` section (`costLambda`, default 0.15) and

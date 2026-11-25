@@ -128,6 +128,57 @@ function checkFrontmatterWarning(): string[] {
 	return lines;
 }
 
+/**
+ * Variants: one file, many addressable agents. Stance deep-merges over the
+ * definition's spec; scaffolding is shared; unknown keys warn; no variants
+ * block means exactly one agent named after the file.
+ */
+function checkVariants(): string[] {
+	const lines: string[] = [];
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "qm-variants-"));
+	try {
+		const dir = path.join(root, ".pi", "agents");
+		fs.mkdirSync(dir, { recursive: true });
+		fs.writeFileSync(
+			path.join(dir, "builder.md"),
+			[
+				"---",
+				"name: builder",
+				"description: builds",
+				"tools: read, edit",
+				"spec:",
+				"  weights: { code: 0.8, cost: 0.2 }",
+				"  temperature: 0.5",
+				"  filters: { minCostScore: 0.2 }",
+				"variants:",
+				"  builder: {}",
+				"  builder-cheap: { weights: { cost: 0.7 } }",
+				"  builder-wild: { temperature: 0.9, bogus: 1 }",
+				"---",
+				"shared prompt",
+			].join("\n"),
+		);
+		fs.writeFileSync(path.join(dir, "scout.md"), ["---", "name: scout", "description: looks", "spec:", "  weights: { code: 1 }", "---", "p"].join("\n"));
+		const config = loadConfig(root);
+		const a = config.agents;
+		const checks: Array<[string, boolean]> = [
+			["three variants + plain scout", ["builder", "builder-cheap", "builder-wild", "scout"].every((n) => a.has(n)) && !a.has("builder-x")],
+			["inherit ({}) keeps the spec", a.get("builder")?.spec?.temperature === 0.5 && a.get("builder")?.spec?.weights.code === 0.8],
+			["weights deep-merge (code kept, cost replaced)", a.get("builder-cheap")?.spec?.weights.code === 0.8 && a.get("builder-cheap")?.spec?.weights.cost === 0.7],
+			["filters inherited", a.get("builder-cheap")?.spec?.filters?.minCostScore === 0.2],
+			["temperature override wins", a.get("builder-wild")?.spec?.temperature === 0.9],
+			["scaffolding shared", a.get("builder-cheap")?.systemPrompt === a.get("builder")?.systemPrompt && a.get("builder-cheap")?.tools?.join() === "read,edit"],
+			["definition lineage", a.get("builder-cheap")?.definition === "builder" && a.get("scout")?.definition === "scout"],
+			["unknown variant key warns", config.warnings.some((w) => w.message.includes('unknown key "bogus"'))],
+		];
+		for (const [label, ok] of checks) lines.push(`  ${label}: ${ok ? "ok" : "WRONG"}`);
+		if (checks.some(([, ok]) => !ok)) throw new Error("variant parsing misbehaves");
+	} finally {
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+	return lines;
+}
+
 const cwd = process.argv[2] ?? process.cwd();
 const config = loadConfig(cwd);
 
@@ -156,6 +207,9 @@ lines.push(...checkProjectDiscovery());
 lines.push(...checkGitFileAndOpenWalk());
 lines.push("", "frontmatter warnings (parser reason required):");
 lines.push(...checkFrontmatterWarning());
+
+lines.push("", "variants (one file, many agents):");
+lines.push(...checkVariants());
 
 if (config.emptyState) lines.push("", config.emptyState);
 if (config.warnings.length) {

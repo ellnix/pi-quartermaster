@@ -60,7 +60,7 @@ function teamText(status: TeamStatus): { content: { type: "text"; text: string }
 	} else {
 		lines.push(`Team ${status.teamId ?? "?"} — ${status.members.length} member(s).`);
 		for (const m of status.members) {
-			lines.push(`- ${m.name} [${m.state === "unstarted" ? "idle (not started)" : m.state}] ${m.model ? `on ${m.model}` : "(no model drawn)"} — ${m.description}${m.note ? ` (${m.note})` : ""}`);
+			lines.push(`- ${m.name}${m.definition ? ` (${m.definition})` : ""} [${m.state === "unstarted" ? "idle (not started)" : m.state}] ${m.model ? `on ${m.model}` : "(no model drawn)"} — ${m.description}${m.note ? ` (${m.note})` : ""}`);
 		}
 		if (status.openMailboxes.length) {
 			lines.push(`Open mailboxes: ${status.openMailboxes.join(", ")}`);
@@ -225,12 +225,13 @@ export default function quartermaster(pi: ExtensionAPI): void {
 		name: "read_channel",
 		label: "Read channel",
 		description:
-			"Read logged team traffic on demand. channel is a mailbox name or \"reports\". " +
+			"Read logged team traffic on demand. channel is \"reports\", a mailbox template name " +
+			"(all of its wirings), a channel id, or a pairing like \"builder--scout\". " +
 			"All traffic is logged; nothing is pushed into your context. The logs are plain " +
 			"JSONL files under the team record (team_list shows the path): read them with " +
 			"your own tools and run any analysis you like.",
 		parameters: Type.Object({
-			channel: Type.String({ description: "A mailbox name, or \"reports\"." }),
+			channel: Type.String({ description: "\"reports\", a mailbox template name, a channel id, or a from--to pairing." }),
 			tail: Type.Optional(Type.Number({ description: "How many recent messages to return. Default 20." })),
 		}),
 		execute: async (_id, params: ReadChannelInput, _sig, _up, ctx) => channelText(await getEngine(ctx).readChannel(params)),

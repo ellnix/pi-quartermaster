@@ -49,8 +49,17 @@ interface FleetMember {
 	pendingDelivery: Array<{ text: string }>;
 }
 
-/** A channel opened for this team: the template plus the wired endpoints. */
+/**
+ * A channel opened for this team: the template plus the wired endpoints.
+ * Identity is the wiring, not the file. A template wired once keeps its own
+ * name as the id (and its log file, so existing records need no migration);
+ * a template wired more than once gets `<template>__<from>--<to>` per
+ * pairing, so one template can back any number of pairings.
+ */
 interface OpenChannel {
+	/** Unique channel id: the log's name and the key traffic is isolated by. */
+	id: string;
+	/** The template's name. */
 	name: string;
 	template: MailboxDef;
 	from: string;
@@ -102,6 +111,21 @@ export class Fleet {
 		const warnings: string[] = [];
 		const mailboxes = input.mailboxes ?? [];
 
+		// The same template wired twice with the same endpoints is a caller
+		// mistake, not a legal multiplicity: fail before anything is drawn.
+		const seenWirings = new Set<string>();
+		for (const w of mailboxes) {
+			const key = JSON.stringify([w.name, w.from, w.to]);
+			if (seenWirings.has(key)) {
+				throw new Error(
+					`mailbox "${w.name}" is wired twice from "${w.from}" to "${w.to}" — a duplicate wiring; wire each pairing once`,
+				);
+			}
+			seenWirings.add(key);
+		}
+		const wiredCount = new Map<string, number>();
+		for (const w of mailboxes) wiredCount.set(w.name, (wiredCount.get(w.name) ?? 0) + 1);
+
 		// Members first: the channel wiring references them.
 		this.teamId = `t${Date.now().toString(36)}`;
 		this.recordPath = recordDir(this.teamId);
@@ -124,20 +148,17 @@ export class Fleet {
 		// whose endpoints are not members cannot open, but the rest of the
 		// team is not held hostage by one bad wire.
 		for (const wiring of mailboxes) {
-			warnings.push(...this.openChannel(wiring));
+			warnings.push(...this.openChannel(wiring, (wiredCount.get(wiring.name) ?? 1) > 1));
 		}
 
 		return this.status(warnings);
 	}
 
-	private openChannel(wiring: ConveneMailboxInput): string[] {
+	private openChannel(wiring: ConveneMailboxInput, multiWired: boolean): string[] {
 		const warnings: string[] = [];
 		const template = this.config.mailboxes.get(wiring.name);
 		if (!template) {
 			return [`mailbox "${wiring.name}" is not defined — channel skipped`];
-		}
-		if (this.channels.has(wiring.name)) {
-			return [`channel "${wiring.name}" listed twice — second occurrence skipped`];
 		}
 		const warningsFor: string[] = [];
 		if (!this.members.has(wiring.from)) {
@@ -148,7 +169,8 @@ export class Fleet {
 		}
 		if (warningsFor.length > 0) return warningsFor;
 
-		this.channels.set(wiring.name, { name: wiring.name, template, from: wiring.from, to: wiring.to });
+		const id = multiWired ? `${wiring.name}__${wiring.from}--${wiring.to}` : wiring.name;
+		this.channels.set(id, { id, name: wiring.name, template, from: wiring.from, to: wiring.to });
 		return warnings;
 	}
 
@@ -262,7 +284,7 @@ export class Fleet {
 	 * which is what makes its declaration honest), then deliver.
 	 */
 	private routeSend(member: FleetMember, mailboxName: string, body: string): string | SendReceipt {
-		const channel = this.channels.get(mailboxName);
+		const channel = this.resolveOutbound(member.name, mailboxName);
 		const recipient = channel ? this.members.get(channel.to) : undefined;
 		// One uniform refusal: never reveal whether the channel exists, how it
 		// is wired, or who it belongs to. Members learn only their own graph.
@@ -270,15 +292,42 @@ export class Fleet {
 			return `no mailbox "${mailboxName}" is open for you to send through`;
 		}
 
-		const entry = appendChannel(this.recordPath!, mailboxName, {
-			channel: mailboxName,
+		const entry = appendChannel(this.recordPath!, channel.id, {
+			channel: channel.id,
 			ts: Date.now(),
 			from: channel.from,
 			to: channel.to,
 			body,
 		});
-		this.deliver(recipient, mailboxName, channel.from, channel.to, body, "followUp", entry.id);
+		this.deliver(recipient, channel.id, channel.from, channel.to, body, "followUp", entry.id);
 		return { id: entry.id };
+	}
+
+	/**
+	 * A sender's channel by id, or by template name when that names exactly
+	 * one of the sender's outbound channels. Ambiguity resolves to nothing:
+	 * the member must name the pairing's id.
+	 */
+	private resolveOutbound(sender: string, name: string): OpenChannel | undefined {
+		const byId = this.channels.get(name);
+		if (byId) return byId;
+		const matches = [...this.channels.values()].filter((c) => c.name === name && c.from === sender);
+		return matches.length === 1 ? matches[0] : undefined;
+	}
+
+	/**
+	 * The log ids a read_channel name denotes: a channel id, a template name
+	 * (every wiring of it), or a pairing `from--to` (every channel between
+	 * them). Unknown names pass through, so logs of earlier records stay
+	 * readable by file name.
+	 */
+	channelLogIds(name: string): string[] {
+		if (this.channels.has(name)) return [name];
+		const byTemplate = [...this.channels.values()].filter((c) => c.name === name);
+		if (byTemplate.length > 0) return byTemplate.map((c) => c.id);
+		const byPair = [...this.channels.values()].filter((c) => `${c.from}--${c.to}` === name);
+		if (byPair.length > 0) return byPair.map((c) => c.id);
+		return [name];
 	}
 
 	/**
@@ -320,11 +369,12 @@ export class Fleet {
 		// so role-voiced templates stay truthful under any wiring. Channels
 		// without placeholders are used verbatim.
 		const template = this.channels.get(channel)?.template;
+		const channelLabel = this.channels.get(channel)?.name ?? channel;
 		const preamble = template
 			? template.preamble.replace(/\$\{from\}/g, from).replace(/\$\{to\}/g, to)
 			: undefined;
 		const framing = [
-			`A message${id ? ` (${id})` : ""} arrives via ${channel === "quartermaster" ? "the Quartermaster" : `the ${channel} mailbox`} from ${from}.`,
+			`A message${id ? ` (${id})` : ""} arrives via ${channel === "quartermaster" ? "the Quartermaster" : `the ${channelLabel} mailbox`} from ${from}.`,
 			preamble ? `\n${preamble}\n` : "",
 		].join("\n");
 		const text = `${framing}\n${body}`;
@@ -471,6 +521,7 @@ export class Fleet {
 	status(extraWarnings: string[] = []): TeamStatus {
 		const members: MemberStatus[] = [...this.members.values()].map((m) => ({
 			name: m.name,
+			definition: m.agent.definition !== m.name ? m.agent.definition : undefined,
 			description: m.agent.description.split("\n")[0],
 			spec: m.spec ? `τ${m.spec.temperature} ${Object.keys(m.spec.weights).join(",")}` : undefined,
 			model: m.modelId,
@@ -481,7 +532,7 @@ export class Fleet {
 			convened: this.convened,
 			teamId: this.teamId,
 			members,
-			openMailboxes: [...this.channels.values()].map((c) => `${c.name} (${c.from} -> ${c.to})`),
+			openMailboxes: [...this.channels.values()].map((c) => `${c.id} (${c.from} -> ${c.to})`),
 			pendingAsks: this.recordPath ? pendingAsks(this.recordPath).length : 0,
 			unreadReports: this.recordPath ? readReports(this.recordPath).length : 0,
 			warnings: extraWarnings,
@@ -538,13 +589,13 @@ function assembleSpawnPrompt(
 	if (channels.outbound.length > 0) {
 		lines.push("", "CHANNELS YOU CAN SEND THROUGH (with the send tool):");
 		for (const ch of channels.outbound) {
-			lines.push(`- ${ch.name} -> ${ch.to}`);
+			lines.push(`- ${ch.id} -> ${ch.to}`);
 		}
 	}
 	if (channels.inbound.length > 0) {
 		lines.push("", "CHANNELS THAT MAY DELIVER TO YOU:");
 		for (const ch of channels.inbound) {
-			lines.push(`- ${ch.name} <- ${ch.from}`);
+			lines.push(`- ${ch.id} <- ${ch.from}`);
 		}
 	}
 	lines.push("", "YOUR TASK:", task);

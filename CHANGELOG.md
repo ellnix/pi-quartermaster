@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 ### Added
+- Agent `variants`: one file declares several addressable agents sharing the
+  prompt and tools, each with its spec deep-merged over the file's
+  (weights, temperature, filters). Each variant is drawn independently and
+  rated on its own; `team_list` shows `builder-cheap (builder)`. No
+  `variants` block behaves exactly as before.
+- One mailbox template can back many wirings. A template wired once keeps
+  its channel name and log; wired more than once, each pairing gets
+  channel `<template>__<from>--<to>` with an isolated log. `read_channel`
+  accepts the template name (all wirings), the channel id, or `from--to`.
+  Wiring the same template with identical endpoints twice now fails convene.
 - `convene_team` member `task` is optional. With no task (omitted or `""`) a
   member convenes armed: model drawn, channels open, no session run and no
   tokens. `team_list` shows it as `idle (not started)`. The first

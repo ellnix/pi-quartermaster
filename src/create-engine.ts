@@ -109,7 +109,11 @@ export function createEngine(ctx: ExtensionToolContext): QuartermasterEngine {
 					warnings: [],
 				};
 			}
-			const entries = readChannelLog(recordPath, input.channel, tail);
+			const ids = state.fleet?.channelLogIds(input.channel) ?? [input.channel];
+			const entries = ids
+				.flatMap((id) => readChannelLog(recordPath, id))
+				.sort((a, b) => a.ts - b.ts)
+				.slice(-tail);
 			return { channel: input.channel, messages: entries, warnings: [] };
 		},
 

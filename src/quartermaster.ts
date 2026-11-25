@@ -67,7 +67,7 @@ function teamText(status: TeamStatus): { content: { type: "text"; text: string }
 			lines.push("", "Agents you can convene (pick by description; each has its own tools and spec):");
 			for (const a of avail.agents) {
 				lines.push(`- ${a.name}${a.definition ? ` (variant of ${a.definition})` : ""} — ${a.description}`);
-				lines.push(`    tools: ${a.tools}; spec: ${a.pinnedModel ? `pinned to ${a.pinnedModel}` : a.spec}`);
+				lines.push(`    tools: ${a.tools}; spec: ${a.pinnedModel ? `pinned to ${a.pinnedModel}` : a.spec}${a.worktree ? `; worktree: ${a.worktree}` : ""}`);
 			}
 		}
 		if (avail && avail.mailboxes.length > 0) {

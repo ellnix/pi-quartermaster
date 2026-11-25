@@ -69,6 +69,7 @@ export function createEngine(ctx: ExtensionToolContext): QuartermasterEngine {
 						tools: (a.tools ?? ["read", "ls", "find", "grep"]).join(", "),
 						spec: a.spec ? `τ${a.spec.temperature} ${Object.entries(a.spec.weights).map(([d, w]) => `${d}:${w}`).join(" ")}` : "-",
 						pinnedModel: a.model,
+						worktree: a.worktree,
 					})),
 					mailboxes: [...config.mailboxes.values()].map((m) => ({ name: m.name, description: m.description.replace(/\s+/g, " ").trim() })),
 				},

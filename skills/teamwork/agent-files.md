@@ -33,6 +33,7 @@ of guessing.
 | `name` | The definition id and, without `variants`, the member name | Renaming breaks wirings that name it |
 | `description` | When to use this agent (shown by `team_list`) | Changes how you, the quartermaster, route; write a when-to-use sentence |
 | `tools` | The pre-approved tool surface. A grant, not a suggestion | Adding `edit`/`write` makes a builder; omitting means read-only defaults. Anything outside it must be asked for via `request_permission` |
+| `worktree` | Where members work: `shared` (the user's tree), `per-member` (its own git worktree and branch) or `attach` (another member's worktree, named at convene with `attachTo`) | Absent: per worktrees.jsonc — with `default: auto`, `per-member` for agents granted `edit`/`write` and `shared` otherwise; with `default: shared`, always `shared`. A convene's `worktree` argument overrides this. `attach` is for read-only agents and is refused for agents with `edit`/`write` |
 | `model` | Pins one exact model and skips the draw | Use for a model that must not vary; otherwise leave it out and use a spec |
 | `spec.weights` | Dimensions the draw optimises, each 0-1; `cost` weighs cheapness | Raising a dimension tilts draws to models scored high on it |
 | `spec.temperature` | Draw posture, 0-5. Low trusts the scores; high gambles | 0 is deterministic best; 0.3 frontier; 0.5-0.8 normal; above 1 is deliberate chaos |

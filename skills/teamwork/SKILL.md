@@ -111,11 +111,13 @@ whichever two agents your list offers for implementing and reviewing.
 ```json
 { "members": [
     { "agent": "<implementer>", "task": "<complete task, as in example 1>" },
-    { "agent": "<reviewer>",    "task": "Review the implementer's work on `fix/invoice-rounding`. First write your risk list (what could go wrong with half-even rounding on this code path: negative lines, zero quantity, currency with no minor units). Then review the diff against it once the implementer reports. Send findings to the implementer on your mailbox; do not wait for me to relay." } ],
+    { "agent": "<reviewer>",    "worktree": "attach", "attachTo": "<implementer>", "task": "Review the implementer's work on `fix/invoice-rounding`. First write your risk list (what could go wrong with half-even rounding on this code path: negative lines, zero quantity, currency with no minor units). Then review the diff against it once the implementer reports. Send findings to the implementer on your mailbox; do not wait for me to relay." } ],
   "mailboxes": [
     { "name": "<mailbox for implementer -> reviewer>", "from": "<implementer>", "to": "<reviewer>" },
     { "name": "<mailbox for reviewer -> implementer>", "from": "<reviewer>",    "to": "<implementer>" } ] }
 ```
+
+Attaching the reviewer to the implementer's worktree (`worktree: "attach"`) lets it review the real tree while being unable to dirty it; the reviewer's agent must grant no `edit`/`write`, and the implementer must have its own worktree, which needs a git checkout. See the "Working trees" section for how placement works.
 
 Choose each mailbox by its description: one that lets the implementer
 ask the reviewer about intent, one that lets the reviewer send findings.

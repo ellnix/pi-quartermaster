@@ -8,6 +8,7 @@
  */
 
 import type { WakePolicy } from "./config/authority.ts";
+import type { WorktreeMode } from "./config/agents.ts";
 
 /**
  * A spec built on the fly by the quartermaster. The persistent form —
@@ -162,7 +163,7 @@ export interface MemberStatus {
 
 /** What the user's configuration offers, shown while planning a convene. */
 export interface AvailableConfig {
-	agents: Array<{ name: string; definition?: string; description: string; tools: string; spec: string; pinnedModel?: string }>;
+	agents: Array<{ name: string; definition?: string; description: string; tools: string; spec: string; pinnedModel?: string; worktree?: WorktreeMode }>;
 	mailboxes: Array<{ name: string; description: string }>;
 }
 

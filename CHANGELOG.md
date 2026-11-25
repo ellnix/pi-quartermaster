@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 ### Added
+- `open_mailbox` and `close_mailbox`: manage channels on a live team,
+  separately from `add_member`. Closing is the quartermaster's first admin
+  lever: delivery stops at once, the log is kept, and `open_mailbox`
+  revives the same channel. Both are recorded in `composition.jsonl`.
 - `add_member` and `remove_member`: change a live team without dissolving.
   Adding draws one member under the usual gates (a failed draw leaves the
   team unchanged), with an optional task (omit to add armed) and optional

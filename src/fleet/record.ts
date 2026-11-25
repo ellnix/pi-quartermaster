@@ -90,9 +90,15 @@ export function readChannelLog(recordPath: string, mailbox: string, tail?: numbe
  * from the record alone.
  */
 export interface CompositionEntry {
-	type: "added" | "removed";
+	type: "added" | "removed" | "channel_opened" | "channel_closed";
 	ts: number;
-	member: string;
+	/** The member added or removed; absent on channel events. */
+	member?: string;
+	/** Channel events: the channel id, template and wired endpoints. */
+	channel?: string;
+	template?: string;
+	from?: string;
+	to?: string;
 	/** The agent definition (file) behind the member. */
 	definition?: string;
 	model?: string;

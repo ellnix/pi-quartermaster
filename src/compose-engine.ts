@@ -25,6 +25,8 @@ export function composeEngine(parts: Partial<QuartermasterEngine>): Quartermaste
 		dissolve: parts.dissolve ?? (() => fallback.dissolve()),
 		addMember: parts.addMember ?? ((input) => fallback.addMember(input)),
 		removeMember: parts.removeMember ?? ((input) => fallback.removeMember(input)),
+		openMailbox: parts.openMailbox ?? ((input) => fallback.openMailbox(input)),
+		closeMailbox: parts.closeMailbox ?? ((input) => fallback.closeMailbox(input)),
 		wakeSource: parts.wakeSource ?? (() => null),
 	};
 }

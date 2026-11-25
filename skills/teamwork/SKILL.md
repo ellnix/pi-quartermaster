@@ -30,7 +30,11 @@ Standing orders for the quartermaster.
   scope grows, a specialist is needed, or a variant should race. It
   takes an optional `mailboxes` list for the new member's channels;
   members already running are not told about them, so message them.
-  A failed draw leaves the team untouched.
+  A failed draw leaves the team untouched. Channels are managed
+  separately: `open_mailbox` wires a template between two live members
+  and `close_mailbox` shuts a channel (an abused or finished one); a
+  closed channel keeps its log and `open_mailbox` can revive it. Members
+  are not told when channels change, so message them.
 - `remove_member` retires a member whose part is done, who is stuck, or
   who lost a race. It refuses while the member works or has pending
   asks; `force: true` interrupts and denies the asks. Channels close,

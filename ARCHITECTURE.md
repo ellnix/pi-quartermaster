@@ -203,7 +203,10 @@ identical endpoints fails convene.
 
 Membership is dynamic: `add_member` / `remove_member` append `added` /
 `removed` events to the record's `composition.jsonl`, carrying the drawn
-model and weighted dimensions so a removed member remains ratable. A
+model and weighted dimensions so a removed member remains ratable. `open_mailbox` / `close_mailbox` change
+channels the same way (`channel_opened` / `channel_closed` events); a
+closed channel refuses delivery both ways, keeps its log, and reopens
+under the same id. A
 removed member stays in the roster as history; its channels are marked
 closed (no delivery, logs kept) and its runtime session is disposed.
 

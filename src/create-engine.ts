@@ -9,6 +9,8 @@ import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import type {
 	Ack,
 	AddMemberInput,
+	CloseMailboxInput,
+	OpenMailboxInput,
 	ConveneInput,
 	RemoveMemberInput,
 	MessageInput,
@@ -129,6 +131,18 @@ export function createEngine(ctx: ExtensionToolContext): QuartermasterEngine {
 			const fleet = state.fleet;
 			if (!fleet?.convened) return { ok: false, message: "no convened team (or it was dissolved) — nothing to remove members from" };
 			return fleet.removeMember(input);
+		},
+
+		openMailbox: async (input: OpenMailboxInput): Promise<Ack> => {
+			const fleet = state.fleet;
+			if (!fleet?.convened) return { ok: false, message: "no convened team (or it was dissolved) — convene before opening mailboxes" };
+			return fleet.openMailbox(input);
+		},
+
+		closeMailbox: async (input: CloseMailboxInput): Promise<Ack> => {
+			const fleet = state.fleet;
+			if (!fleet?.convened) return { ok: false, message: "no convened team (or it was dissolved) — nothing to close mailboxes on" };
+			return fleet.closeMailbox(input);
 		},
 
 		message: async (input: MessageInput): Promise<Ack> => {

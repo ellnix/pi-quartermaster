@@ -25,6 +25,8 @@ import {
 import type {
 	Ack,
 	AddMemberInput,
+	CloseMailboxInput,
+	OpenMailboxInput,
 	ConveneInput,
 	ConveneMailboxInput,
 	MemberStatus,
@@ -222,6 +224,14 @@ export class Fleet {
 		}
 		if (warningsFor.length > 0) return warningsFor;
 
+		// Reopening a closed pairing revives its channel (same id, same log).
+		const existing = [...this.channels.values()].find(
+			(c) => c.name === wiring.name && c.from === wiring.from && c.to === wiring.to,
+		);
+		if (existing?.closed) {
+			existing.closed = false;
+			return warnings;
+		}
 		const id = multiWired ? `${wiring.name}__${wiring.from}--${wiring.to}` : wiring.name;
 		if (this.channels.has(id)) return [`channel "${id}" already exists — skipped`];
 		this.channels.set(id, { id, name: wiring.name, template, from: wiring.from, to: wiring.to });
@@ -394,9 +404,9 @@ export class Fleet {
 	 * readable by file name.
 	 */
 	channelLogIds(name: string): string[] {
-		if (this.channels.has(name)) return [name];
 		const byTemplate = [...this.channels.values()].filter((c) => c.name === name);
 		if (byTemplate.length > 0) return byTemplate.map((c) => c.id);
+		if (this.channels.has(name)) return [name];
 		const byPair = [...this.channels.values()].filter((c) => `${c.from}--${c.to}` === name);
 		if (byPair.length > 0) return byPair.map((c) => c.id);
 		return [name];
@@ -525,6 +535,75 @@ export class Fleet {
 			message: `added ${member.name} on ${member.modelId}${task === "" ? " (idle, not started — its first message starts it)" : ""}. Existing members were not told of any new channels.`,
 			warnings,
 		};
+	}
+
+	/**
+	 * Open a channel on a live team: the same wiring rules as convene. An
+	 * identical open wiring is refused; a closed one is revived.
+	 */
+	async openMailbox(input: OpenMailboxInput): Promise<Ack> {
+		const wiring = { name: input.name, from: input.from, to: input.to };
+		const duplicate = this.duplicateWiring([wiring]);
+		if (duplicate) return { ok: false, message: duplicate };
+		const before = new Set(this.channels.keys());
+		const revived = [...this.channels.values()].find(
+			(c) => c.closed && c.name === wiring.name && c.from === wiring.from && c.to === wiring.to,
+		);
+		const warnings = this.openChannel(wiring, this.isMultiWired(wiring.name, [wiring]));
+		// openChannel reports refusals (unknown template, inactive endpoint) as
+		// warnings; success is a new channel, or the revived one now open.
+		const channel = revived && !revived.closed ? revived : [...this.channels.values()].find((c) => !before.has(c.id));
+		if (!channel) return { ok: false, message: `mailbox not opened: ${warnings.join("; ") || "unknown reason"}` };
+		appendComposition(this.recordPath!, {
+			type: "channel_opened",
+			ts: Date.now(),
+			channel: channel.id,
+			template: channel.name,
+			from: channel.from,
+			to: channel.to,
+			by: "quartermaster",
+		});
+		return {
+			ok: true,
+			message: `${revived ? "reopened" : "opened"} ${channel.id} (${channel.from} -> ${channel.to}). ${channel.from} can send through it from its next send; neither member is told, so message them if they should know.`,
+			warnings,
+		};
+	}
+
+	/**
+	 * Close a channel on a live team: it stops delivering in both
+	 * directions (senders get the uniform "no mailbox" refusal), its log is
+	 * preserved, and it can be reopened. Admin lever for an abused channel.
+	 */
+	async closeMailbox(input: CloseMailboxInput): Promise<Ack> {
+		const all = [...this.channels.values()];
+		// An exact id wins when it is open. A closed id falls through, because a
+		// single-wired template's id is its name and may now also name others.
+		let matches = all.filter((c) => c.id === input.channel && !c.closed);
+		if (matches.length === 0) matches = all.filter((c) => `${c.from}--${c.to}` === input.channel && !c.closed);
+		if (matches.length === 0) matches = all.filter((c) => c.name === input.channel && !c.closed);
+		if (matches.length === 0) {
+			const already = all.find((c) => c.id === input.channel);
+			if (already) return { ok: false, message: `${already.id} is already closed` };
+			return { ok: false, message: `no channel "${input.channel}" — open ones: ${all.filter((c) => !c.closed).map((c) => c.id).join(", ") || "none"}` };
+		}
+		if (matches.length > 1) {
+			return { ok: false, message: `"${input.channel}" names ${matches.length} channels (${matches.map((c) => c.id).join(", ")}) — close one by id` };
+		}
+		const channel = matches[0];
+		if (channel.closed) return { ok: false, message: `${channel.id} is already closed` };
+		channel.closed = true;
+		appendComposition(this.recordPath!, {
+			type: "channel_closed",
+			ts: Date.now(),
+			channel: channel.id,
+			template: channel.name,
+			from: channel.from,
+			to: channel.to,
+			reason: input.reason,
+			by: "quartermaster",
+		});
+		return { ok: true, message: `closed ${channel.id} (${channel.from} -> ${channel.to}); its log is kept and it can be reopened with open_mailbox` };
 	}
 
 	/**

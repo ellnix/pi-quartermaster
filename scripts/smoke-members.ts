@@ -124,6 +124,29 @@ await fleet.addMember({ agent: "verifier", task: "check it" });
 const prompt = fleet.members.get("verifier").session.prompts[0] as string;
 ok("spawn prompt lists current members only", prompt.includes("scout") && prompt.includes("reviewer") && !prompt.includes("- builder:"));
 
+// Dynamic mailbox management, decoupled from add_member.
+const scoutS = fleet.members.get("scout");
+const verifier = fleet.members.get("verifier");
+const opened = await fleet.openMailbox({ name: "ask", from: "verifier", to: "scout" });
+ok("open_mailbox opens a pairing on a live team", opened.ok && fleet.channels.has("ask__verifier--scout"));
+ok("open_mailbox refuses an identical open wiring", !(await fleet.openMailbox({ name: "ask", from: "verifier", to: "scout" })).ok);
+ok("open_mailbox refuses a removed endpoint", !(await fleet.openMailbox({ name: "ask", from: "builder", to: "scout" })).ok);
+ok("open_mailbox refuses an unknown template", !(await fleet.openMailbox({ name: "nope", from: "verifier", to: "scout" })).ok);
+ok("sends flow on the new channel", typeof fleet.routeSend(verifier, "ask__verifier--scout", "hi") !== "string");
+const closedRes = await fleet.closeMailbox({ channel: "verifier--scout", reason: "abused" });
+ok("close_mailbox closes by pairing", closedRes.ok && fleet.channels.get("ask__verifier--scout").closed === true);
+ok("closed channel refuses sends with the uniform refusal", fleet.routeSend(verifier, "ask__verifier--scout", "x") === 'no mailbox "ask__verifier--scout" is open for you to send through');
+ok("closed channel log is preserved and readable", readChannelLog(record, "ask__verifier--scout").length === 1 && fleet.channelLogIds("verifier--scout").length === 1);
+ok("close_mailbox refuses closing twice", !(await fleet.closeMailbox({ channel: "ask__verifier--scout" })).ok);
+ok("closing did not touch other channels", typeof fleet.routeSend(fleet.members.get("reviewer"), "ask__reviewer--scout", "still") !== "string");
+const reopened = await fleet.openMailbox({ name: "ask", from: "verifier", to: "scout" });
+ok("open_mailbox revives a closed channel with the same id and log", reopened.ok && reopened.message.includes("reopened") && !fleet.channels.get("ask__verifier--scout").closed);
+const ambiguous = await fleet.closeMailbox({ channel: "ask" });
+ok("close by an ambiguous template name is refused, listing ids", !ambiguous.ok && ambiguous.message.includes("ask__reviewer--scout"));
+ok("close_mailbox refuses an unknown channel", !(await fleet.closeMailbox({ channel: "zzz" })).ok);
+ok("composition log records channel open/close", readComposition(record).filter((e) => e.type === "channel_closed" && e.reason === "abused").length === 1 && readComposition(record).filter((e) => e.type === "channel_opened").length === 2);
+void scoutS;
+
 // Dissolution skips removed sessions and leaves nothing running.
 log.length = 0;
 await fleet.dissolve();

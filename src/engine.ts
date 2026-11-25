@@ -81,6 +81,19 @@ export interface AddMemberInput {
 	mailboxes?: ConveneMailboxInput[];
 }
 
+export interface OpenMailboxInput {
+	/** Mailbox template name. */
+	name: string;
+	from: string;
+	to: string;
+}
+
+export interface CloseMailboxInput {
+	/** A channel id, a `from--to` pairing, or a template name when only one of its channels is open. */
+	channel: string;
+	reason?: string;
+}
+
 export interface RemoveMemberInput {
 	member: string;
 	reason?: string;
@@ -228,6 +241,8 @@ export interface QuartermasterEngine {
 	dissolve(): Promise<TeamStatus>;
 	addMember(input: AddMemberInput): Promise<Ack>;
 	removeMember(input: RemoveMemberInput): Promise<Ack>;
+	openMailbox(input: OpenMailboxInput): Promise<Ack>;
+	closeMailbox(input: CloseMailboxInput): Promise<Ack>;
 	/**
 	 * The active team's record directory and wake policy, or null when no team
 	 * is convened. Synchronous on purpose: it is read after every convene and
@@ -294,6 +309,14 @@ export class NotConfiguredEngine implements QuartermasterEngine {
 
 	async removeMember(input: RemoveMemberInput): Promise<Ack> {
 		return this.ack(`no convened team — nothing to remove ${input.member} from`);
+	}
+
+	async openMailbox(input: OpenMailboxInput): Promise<Ack> {
+		return this.ack(`no convened team — nothing to open ${input.name} on`);
+	}
+
+	async closeMailbox(input: CloseMailboxInput): Promise<Ack> {
+		return this.ack(`no convened team — nothing to close ${input.channel} on`);
 	}
 
 	wakeSource(): WakeSource | null {

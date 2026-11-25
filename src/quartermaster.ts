@@ -38,6 +38,8 @@ import {
 	type SetCostInput,
 	type SetOverrideInput,
 	type AddMemberInput,
+	type CloseMailboxInput,
+	type OpenMailboxInput,
 	type RemoveMemberInput,
 	type RateInput,
 	type TeamStatus,
@@ -382,6 +384,38 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			force: Type.Optional(Type.Boolean({ description: "Interrupt a working member and deny its pending asks." })),
 		}),
 		execute: async (_id, params: RemoveMemberInput, _sig, _up, ctx) => ackText(await getEngine(ctx).removeMember(params)),
+	});
+
+	pi.registerTool({
+		name: "open_mailbox",
+		label: "Open mailbox",
+		description:
+			"Open a channel between two live members, from a mailbox template, on a running team. " +
+			"The same wiring rules as convening: the endpoints must be active members, and the same " +
+			"template with the same endpoints cannot be open twice (a closed one is reopened, log " +
+			"intact). Members are not told; message them if they should know. Logged in the " +
+			"composition history.",
+		parameters: Type.Object({
+			name: Type.String({ description: "Mailbox template name." }),
+			from: Type.String({ description: "Sender member." }),
+			to: Type.String({ description: "Recipient member." }),
+		}),
+		execute: async (_id, params: OpenMailboxInput, _sig, _up, ctx) => ackText(await getEngine(ctx).openMailbox(params)),
+	});
+
+	pi.registerTool({
+		name: "close_mailbox",
+		label: "Close mailbox",
+		description:
+			"Close a channel on a live team, e.g. one being abused or no longer needed. It stops " +
+			"delivering immediately; the sender gets the ordinary \"no mailbox open\" refusal. The " +
+			"log is preserved and stays readable, and open_mailbox can reopen it. Name it by channel " +
+			"id, a from--to pairing, or its template when only one of that template's channels is open.",
+		parameters: Type.Object({
+			channel: Type.String({ description: "Channel id, from--to pairing, or template name." }),
+			reason: Type.Optional(Type.String({ description: "Why, recorded in the composition history." })),
+		}),
+		execute: async (_id, params: CloseMailboxInput, _sig, _up, ctx) => ackText(await getEngine(ctx).closeMailbox(params)),
 	});
 
 	pi.registerTool({

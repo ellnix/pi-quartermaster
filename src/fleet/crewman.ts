@@ -24,6 +24,8 @@ export interface CrewHooks {
 	 * verdict; a rejected promise is a failed ask, not a denial.
 	 */
 	onAsk: (tool: string, args: string, why: string) => Promise<{ approve: boolean; note: string }>;
+	/** False once the member is removed: a run that outlives removal writes nothing. */
+	isActive: () => boolean;
 }
 
 export interface ReportEntry {
@@ -45,13 +47,6 @@ export interface SendReceipt {
 	id: string;
 }
 
-export interface CrewHooks {
-	/**
-	 * Validate and route a mailbox send. A string refusal is returned to the
-	 * sender verbatim; a receipt confirms the send and its tracking number.
-	 */
-	onSend: (mailbox: string, body: string) => string | SendReceipt;
-}
 
 export function crewmanTools(memberName: string, recordPath: string, hooks: CrewHooks): ToolDefinition[] {
 	return [
@@ -75,6 +70,13 @@ export function crewmanTools(memberName: string, recordPath: string, hooks: Crew
 				_toolCallId: string,
 				params: { status: "complete" | "partial" | "blocked"; summary: string; confidence?: number },
 			) {
+				if (!hooks.isActive()) {
+					return {
+						content: [{ type: "text", text: "You were removed from the team; your report was not recorded." }],
+						isError: true,
+						details: {},
+					};
+				}
 				const entry = appendReport(recordPath, {
 					ts: Date.now(),
 					member: memberName,

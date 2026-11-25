@@ -201,6 +201,15 @@ template wired more than once gets one channel per pairing, id
 channel id, or a `from--to` pairing. The same template wired twice with
 identical endpoints fails convene.
 
+Membership is dynamic: `add_member` / `remove_member` append `added` /
+`removed` events to the record's `composition.jsonl`, carrying the drawn
+model and weighted dimensions so a removed member remains ratable. `open_mailbox` / `close_mailbox` change
+channels the same way (`channel_opened` / `channel_closed` events); a
+closed channel refuses delivery both ways, keeps its log, and reopens
+under the same id. A
+removed member stays in the roster as history; its channels are marked
+closed (no delivery, logs kept) and its runtime session is disposed.
+
 Agent definitions likewise: a file may declare `variants`, each an
 addressable agent sharing the file's prompt and tools, with its spec
 deep-merged over the file's. Variants expand at load time, so everything

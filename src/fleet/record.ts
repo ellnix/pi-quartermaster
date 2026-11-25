@@ -11,7 +11,7 @@
  */
 
 import * as fs from "node:fs";
-import { asksFile, channelFile, reportsFile } from "../config/paths.ts";
+import { asksFile, channelFile, compositionFile, reportsFile } from "../config/paths.ts";
 import type { ReportEntry } from "./crewman.ts";
 
 export function ensureRecord(recordPath: string): void {
@@ -84,6 +84,40 @@ export function readChannelLog(recordPath: string, mailbox: string, tail?: numbe
 	return readJsonl<ChannelEntry>(channelFile(recordPath, mailbox), tail);
 }
 
+/**
+ * A composition event: the team's roster history, append-only. Carries the
+ * drawn model and weighted dimensions so a removed member can still be rated
+ * from the record alone.
+ */
+export interface CompositionEntry {
+	type: "added" | "removed" | "channel_opened" | "channel_closed";
+	ts: number;
+	/** The member added or removed; absent on channel events. */
+	member?: string;
+	/** Channel events: the channel id, template and wired endpoints. */
+	channel?: string;
+	template?: string;
+	from?: string;
+	to?: string;
+	/** The agent definition (file) behind the member. */
+	definition?: string;
+	model?: string;
+	dimensions?: Array<{ dimension: string; weight: number }>;
+	/** "convene" or "add_member" for additions. */
+	via?: string;
+	reason?: string;
+	forced?: boolean;
+	by: "quartermaster";
+}
+
+export function appendComposition(recordPath: string, entry: CompositionEntry): void {
+	appendJsonl(compositionFile(recordPath), entry as unknown as Record<string, unknown>);
+}
+
+export function readComposition(recordPath: string): CompositionEntry[] {
+	return readJsonl<CompositionEntry>(compositionFile(recordPath));
+}
+
 export interface AskEntry {
 	id: string;
 	ts: number;
@@ -99,6 +133,8 @@ export interface ResolutionEntry {
 	approve: boolean;
 	by: "quartermaster";
 	userConfirmed?: string;
+	/** Why, when the engine resolved it (e.g. the asker was force-removed). */
+	note?: string;
 }
 
 export interface AskRecordEntry extends Partial<ResolutionEntry> {

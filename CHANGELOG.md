@@ -46,6 +46,13 @@
   branch, clean or dirty, commits ahead, live or unclaimed) and prunes
   unclaimed ones, which works with no team convened. Outside a git
   repository members fall back to your tree with a loud warning.
+- `team_list` with no team convened now lists the configured agents
+  (description, tools, spec) and mailbox templates (description), so a convene
+  is planned from what the user actually has.
+- teamwork skill: worked examples (single member, implementer+reviewer pair,
+  exploration-first trio, specialists), written with placeholder roles, real `convene_team` arguments and the
+  anti-patterns each avoids, plus `skills/teamwork/agent-files.md`, a
+  field-by-field agent file reference with a prompt-body skeleton.
 - `open_mailbox` and `close_mailbox`: manage channels on a live team,
   separately from `add_member`. Closing is the quartermaster's first admin
   lever: delivery stops at once, the log is kept, and `open_mailbox`

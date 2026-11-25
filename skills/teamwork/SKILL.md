@@ -46,7 +46,10 @@ Standing orders for the quartermaster.
 
 ## Convening
 
-1. `team_list` first — see who exists and what each is for.
+1. `team_list` first. With no team it lists the user's configured agents
+   (description, tools, spec) and mailbox templates (description). Read
+   them and plan the team from what exists: the roles, names and
+   relationships differ per user, and nothing here assumes yours.
 2. Agents carry their reusable specs. Override a member's spec only when
    the task genuinely differs from its definition — build the override
    on the fly (weights, temperature, filters), don't invent named specs.
@@ -63,10 +66,146 @@ Standing orders for the quartermaster.
    and start each member when its spec is ready, instead of spending a
    warmup turn on "stand by" acknowledgments. Do not wait for reports
    from members you have not started.
-5. Escalations: auth, tenant-scoping, or money-adjacent diffs → the
-   security reviewer at frontier settings; spec-bearing changes → the
-   business-logic reviewer reading the task text against the diff;
-   view/CSS changes → the designer with screenshots.
+5. Escalations, where the configuration has the agents for them: auth,
+   tenant-scoping, or money-adjacent diffs → the strongest reviewer
+   available (see example 4); spec-bearing changes → a reviewer reading
+   the task text against the diff; view/CSS changes → an agent that can
+   see images, with screenshots.
+
+## Worked examples
+
+**Every agent and mailbox name below is a placeholder.** `<implementer>`, `<reviewer>`, `<explorer>` and `<mailbox ...>` stand for whatever the
+user's own configuration defines; their setup may have different roles,
+fewer of them, or none of these. Before convening, call `team_list`: with
+no team it lists every configured agent (description, tools, spec) and
+every mailbox template (description). **Plan from that list**: choose
+agents by what their descriptions say they are for, check their tools
+(an agent without `edit`/`write` cannot build), and wire only mailboxes
+whose descriptions fit the relationship you need. If the list lacks a
+role an example uses, do without it or ask the user; do not invent an
+agent name. Authoring agents is covered in [agent-files.md](agent-files.md).
+
+The argument shapes are real `convene_team` shapes; the roles and task
+text are illustrative.
+
+### 1. One member, the minimum viable convene
+
+Pick the agent whose description matches the work and whose tools allow it.
+
+```json
+{ "members": [{ "agent": "<an agent that can edit>", "task":
+  "Branch `fix/invoice-rounding` (already checked out). In app/services/invoice_total.rb, round line totals half-even to 2 places before summing; today the sum is rounded once at the end (see the failing spec spec/services/invoice_total_spec.rb:41). Do not touch app/models. Commit as `fix: round invoice lines half-even` (one commit). Run `bundle exec rspec spec/services` and make it pass. Done = that suite green and a report with the diff summary. If the spec contradicts the code in a way you cannot resolve, report blocked instead of guessing." }] }
+```
+
+Why each part: the **branch** and the **file** are what a member cannot
+guess; a **boundary** ("do not touch ...") stops scope creep; the
+**commit convention** and **test command** spare a round trip;
+**done = ...** is what you rate against. A task that cannot name these
+is not ready: ask the user, or an exploring member, first.
+
+### 2. A pair: an implementer and an independent reviewer
+
+Non-trivial code gets a second pair of eyes that did not write it. Use
+whichever two agents your list offers for implementing and reviewing.
+
+```json
+{ "members": [
+    { "agent": "<implementer>", "task": "<complete task, as in example 1>" },
+    { "agent": "<reviewer>",    "task": "Review the implementer's work on `fix/invoice-rounding`. First write your risk list (what could go wrong with half-even rounding on this code path: negative lines, zero quantity, currency with no minor units). Then review the diff against it once the implementer reports. Send findings to the implementer on your mailbox; do not wait for me to relay." } ],
+  "mailboxes": [
+    { "name": "<mailbox for implementer -> reviewer>", "from": "<implementer>", "to": "<reviewer>" },
+    { "name": "<mailbox for reviewer -> implementer>", "from": "<reviewer>",    "to": "<implementer>" } ] }
+```
+
+Choose each mailbox by its description: one that lets the implementer
+ask the reviewer about intent, one that lets the reviewer send findings.
+If one template is written direction-neutrally (its preamble uses
+`${from}`/`${to}`), it can back both directions. The loop that makes the
+pair cheaper than two independent reviews: findings go straight to the
+implementer, fixes and questions come straight back, and you read the
+log and the final reports. With no mailbox in the reviewer's direction,
+findings never reach the person who must fix them. If no suitable
+mailbox exists, say so to the user rather than relaying prose yourself.
+
+### 3. Exploration first
+
+When the work needs the codebase mapped, **convene everyone at once, let
+the exploring member dig while you ask the user the decision questions,
+then compose the implementer's real task from the map and the answers.**
+This needs an agent whose description is read-only exploration.
+
+```json
+{ "members": [
+    { "agent": "<explorer>", "task": "Map how invoice totals are computed: entry points, every place a line total or the sum is rounded, the specs that cover it. Report exact paths with line numbers and facts only; no proposals." },
+    { "agent": "<implementer>" },
+    { "agent": "<reviewer>" } ],
+  "mailboxes": [
+    { "name": "<implementer -> reviewer>", "from": "<implementer>", "to": "<reviewer>" },
+    { "name": "<reviewer -> implementer>", "from": "<reviewer>",    "to": "<implementer>" },
+    { "name": "<ask the explorer>",        "from": "<implementer>", "to": "<explorer>" },
+    { "name": "<ask the explorer>",        "from": "<reviewer>",    "to": "<explorer>" },
+    { "name": "<explorer answers>",        "from": "<explorer>",    "to": "<implementer>" },
+    { "name": "<explorer answers>",        "from": "<explorer>",    "to": "<reviewer>" } ] }
+```
+
+The implementer and reviewer have no task: they convene **armed** (idle,
+not started, no tokens), so there is no "stand by" warmup. A template may
+back several wirings, as `<ask the explorer>` does here; if your list has
+one template per direction and pairing, wire each as its description
+says. Then, in order:
+
+1. While the explorer digs, ask the user the questions that change the
+   design (rounding mode, back-compat for stored totals). Do not read
+   the codebase yourself.
+2. When the explorer reports, `message_member` the **reviewer** first:
+   the map is its risk-list input. It starts on that message.
+3. Compose the implementer's task from the map (cite paths and line
+   numbers) plus the user's answers, in the shape of example 1, and send
+   it with `message_member`. That starts it.
+4. Rate everyone when they return.
+
+The two rules: **ask the explorer instead of grepping the repo
+yourself** (the biggest context saver you have), and **ask the user the
+decision questions while it digs**, never after it finishes. If the
+configuration has no read-only exploring agent, ask the user whether to
+add one, or accept the cost of exploring in your own context.
+
+### 4. Specialists
+
+Add a specialist when the work needs one and your list has it; do not
+convene them by default. Three shapes recur. Each depends on what the
+agent files declare, so read the agent's `team_list` entry first:
+
+- **Needs to see images** (UI work, screenshots): pick an agent whose
+  spec requires image input (`filters.require: [image]`); the draw then
+  only considers vision models. Without one, a text-only member cannot
+  judge a screenshot.
+- **Needs facts from outside the repo** (libraries, versions): pick an
+  agent described as research, not your exploring member's read-only dig.
+- **Needs the strongest review** (auth, tenant-scoping, money-adjacent
+  diffs): use a reviewer agent, optionally with a spec override that sets
+  a score floor. A floor is a requirement, a higher weight is only a tilt.
+
+```json
+{ "agent": "<reviewer>", "spec": { "weights": { "review": 1.0 }, "filters": { "minScores": { "review": 0.85 } } }, "task": "..." }
+```
+
+`review` here is a score dimension from the user's `models.yaml`; use the
+dimensions their agents' specs already name. An override applies to this
+deployment only; make it permanent in the agent file. Mid-flight: the
+same arguments to `add_member`, then `open_mailbox` to wire it in.
+
+## Anti-patterns
+
+| Don't | Because |
+|---|---|
+| Convene from remembered or example names | Agents and mailboxes are the user's own; read `team_list` and use what exists |
+| Convene before the spec exists | Members improvise, or you spend a run on a warmup; convene armed and start when ready |
+| Task: "explore the repo and work out how to do X" | You pay an implementer for what a read-only explorer maps cheaper |
+| Research the codebase in your own context | Context flood and shallower coverage than a dedicated dig |
+| Convene a pair with no mailboxes | Findings never reach whoever must fix them |
+| Skip the ratings | Evidence is lost and the next draw is uninformed (see Ratings) |
+| Dissolve and reconvene to add one specialist | Every draw is lost; use `add_member` |
 
 ## Working trees
 

@@ -117,6 +117,7 @@ export function createEngine(ctx: ExtensionToolContext): QuartermasterEngine {
 			}
 			if (input.channel === "reports") {
 				const entries = readReports(recordPath, tail);
+				state.fleet?.markReportsRead();
 				return {
 					channel: "reports",
 					messages: entries.map((e) => ({

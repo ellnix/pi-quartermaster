@@ -54,7 +54,7 @@ function fleetFor(repo: string, wt: WorktreeConfig): any {
 }
 /** Spawn through the real placement path, with a stub where the model draw would be. */
 async function spawn(fleet: any, a: any, ws: any = {}, warnings: string[] = []): Promise<any> {
-	const member: any = { name: a.name, agent: a, state: "convening", pendingDelivery: [] };
+	const member: any = { name: a.name, agent: a, state: "convening", pendingDelivery: [], notices: [] };
 	fleet.members.set(a.name, member);
 	try {
 		member.placement = await fleet.place(member, ws, warnings);

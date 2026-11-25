@@ -380,7 +380,7 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			"the same gates as convening. A failed draw leaves the team unchanged. The task may be " +
 			"omitted to add the member armed (idle, not started; its first message starts it). " +
 			"mailboxes extends the channel graph; existing wiring is untouched, and members already " +
-			"running are not told about new channels. Logged in the record's composition history.",
+			"running hear of new channels at their next message. Logged in the record's composition history.",
 		parameters: Type.Object({
 			agent: Type.String({ description: "Agent or variant name." }),
 			spec: Type.Optional(SPEC_OVERRIDE),
@@ -442,7 +442,7 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			"Open a channel between two live members, from a mailbox template, on a running team. " +
 			"The same wiring rules as convening: the endpoints must be active members, and the same " +
 			"template with the same endpoints cannot be open twice (a closed one is reopened, log " +
-			"intact). Members are not told; message them if they should know. Logged in the " +
+			"intact). Both members are told at their next message. Logged in the " +
 			"composition history.",
 		parameters: Type.Object({
 			name: Type.String({ description: "Mailbox template name." }),

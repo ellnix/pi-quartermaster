@@ -50,6 +50,8 @@ export interface ReportEntry {
 export interface SendReceipt {
 	/** The message's tracking number. */
 	id: string;
+	/** The recipient's mailbox back to the sender, when it has one. Without it no reply can arrive. */
+	replyChannel?: string;
 }
 
 
@@ -149,7 +151,8 @@ export function crewmanTools(memberName: string, recordPath: string, hooks: Crew
 				"knows who you are and is ready to accept your message - do not introduce " +
 				"yourself, just say what you need. The engine frames and logs the delivery, " +
 				"and the Quartermaster sees all traffic. A tracking number is echoed back to " +
-				"you and can be cited when the Quartermaster steers you. Your instructions " +
+				"you and can be cited when the Quartermaster steers you. A reply, if there is one, arrives later as a message to you (there is nothing to poll), and only if " +
+				"the recipient has a mailbox back to you; the send result tells you. Your instructions " +
 				"list your channels by name and recipient; anything beyond that about a " +
 				"channel is not your concern.",
 			promptSnippet: "Message crewmates directly through your sanctioned mailboxes with send - no introductions needed.",
@@ -174,7 +177,11 @@ export function crewmanTools(memberName: string, recordPath: string, hooks: Crew
 					content: [
 						{
 							type: "text",
-							text: `Sent via ${params.mailbox} as ${result.id}: the recipient sees it when idle; the Quartermaster sees it always. ${result.id} can be cited to reference this message.`,
+							text:
+								`Sent via ${params.mailbox} as ${result.id}: the recipient sees it when idle; the Quartermaster sees it always. ${result.id} can be cited to reference this message. ` +
+								(result.replyChannel
+									? `They can answer on ${result.replyChannel}; the answer arrives later as a message to you. You cannot poll for it: carry on with other work, or report what you are waiting on.`
+									: "They have no mailbox back to you, so do not wait for a reply here; if you need an answer, say so in your report."),
 						},
 					],
 					details: { mailbox: params.mailbox, id: result.id },

@@ -9,12 +9,13 @@
 
 import * as fs from "node:fs";
 import * as os from "node:os";
+import { DEFAULT_WORKTREES } from "../src/config/worktrees.ts";
 import { Fleet } from "../src/fleet/fleet.ts";
 import { readChannelLog } from "../src/fleet/record.ts";
 
 const agent = (name: string): any => ({ name, definition: name, description: name, systemPrompt: "", source: "user", filePath: "" });
 const template: any = { name: "ask", description: "d", preamble: "FROM ${from} TO ${to}", source: "user", filePath: "" };
-const config: any = { agents: new Map(), mailboxes: new Map([["ask", template]]), models: new Map(), authority: {}, warnings: [] };
+const config: any = { agents: new Map(), mailboxes: new Map([["ask", template]]), models: new Map(), authority: {}, worktrees: DEFAULT_WORKTREES, warnings: [] };
 
 const fleet: any = new Fleet({} as any, config, {} as any, {} as any);
 const record = fs.mkdtempSync(`${os.tmpdir()}/qm-channels-`);
@@ -28,7 +29,7 @@ for (const name of ["builder", "reviewer", "scout"]) {
 		name,
 		agent: agent(name),
 		state: "idle",
-		pendingDelivery: [],
+		pendingDelivery: [], notices: [],
 		session: { prompt: async (t: string) => void prompts[name].push(t) },
 	});
 }

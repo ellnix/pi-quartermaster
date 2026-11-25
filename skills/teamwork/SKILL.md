@@ -29,12 +29,13 @@ Standing orders for the quartermaster.
   variant name; the task may be omitted to add it armed). Use it when
   scope grows, a specialist is needed, or a variant should race. It
   takes an optional `mailboxes` list for the new member's channels;
-  members already running are not told about them, so message them.
+  members already running hear of them at their next message.
   A failed draw leaves the team untouched. Channels are managed
   separately: `open_mailbox` wires a template between two live members
   and `close_mailbox` shuts a channel (an abused or finished one); a
   closed channel keeps its log and `open_mailbox` can revive it. Members
-  are not told when channels change, so message them.
+  are told at their next message; a member that has not started learns
+  from its standing instructions.
 - `remove_member` retires a member whose part is done, who is stuck, or
   who lost a race. It refuses while the member works or has pending
   asks; `force: true` interrupts and denies the asks. Channels close,
@@ -241,6 +242,15 @@ user's tree.
 
 ## While the team works
 
+- **A mailbox is one-way.** A member that asks a question can only be
+  answered if the other member has a mailbox back to it: wire both
+  directions (a pair's two mailboxes), or `open_mailbox` the reverse. A
+  sender is told on every send whether the recipient can reply; a member
+  with no way back is told not to wait. Replies arrive later as messages
+  (nothing to poll). Both ends hear of channels you open or close at
+  their next message.
+- **"Unread" reports** counts only those you have not read with
+  `read_channel "reports"`; reading marks them read.
 - **Clarifications flow through mailboxes; reports flow to you.** Relay
   pointers, never prose. Mailbox traffic stays on demand — read channels
   with `read_channel`; the logs are plain JSONL, so read them with your

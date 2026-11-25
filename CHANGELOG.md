@@ -1,6 +1,28 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.0]
+### Fixed
+- A member that asks a question can now be answered: every send tells the
+  sender whether the recipient has a mailbox back, and names it, so a
+  member with no way back stops waiting instead of hanging. The `send`
+  tool description says replies arrive as later messages and cannot be
+  polled.
+- Channel changes reach the members they affect. Opening or closing a
+  mailbox (and the `mailboxes` of `add_member`) queues a short notice for
+  both ends, delivered ahead of their next message; a not-yet-started
+  member learns the current channels from its standing instructions.
+  Previously running members never learned a channel existed.
+- `team_list` "unread reports" counted every report ever written. It now
+  counts only reports newer than your last `read_channel "reports"`.
+- Identical warnings (for example the unrated-candidates note, once per
+  drawn member) are reported once.
+- `team_list` with no team shows each agent's `worktree` setting.
+- Provisioning is gated on project trust: when pi does not trust the
+  project, the `setup` and `copy` in its `.pi/team/worktrees.jsonc` are
+  skipped (members still get their own tree, bare, and the convene result
+  says why). `setup` is shell from the repository, and pi gates project
+  config on trust for the same reason.
+
 ### Changed
 - Ratings now refine your scores instead of replacing them. A `models.yaml`
   score (or override) is a beta prior worth `k` pseudo-trials
@@ -12,8 +34,6 @@
   re-anchored when read, so editing a score or `k` takes effect on the next
   draw. `priorStrength: 1` is the closest to the old behaviour. `minScores`
   gates are unchanged.
-
-### Changed
 - Crewmen are told what their mailboxes are for: they are sanctioned by the
   Quartermaster, using them lightens its load, and the recipient already
   knows the sender, so no introductions are needed. The statement appears

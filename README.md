@@ -50,13 +50,20 @@ surface:
 | Tool | Purpose |
 |---|---|
 | `convene_team` | spawn members with drawn models; declare the channel wiring |
-| `team_list` | members, states, open channels, pending asks, unread reports |
+| `team_list` | with no team: the agents and mailbox templates you can convene; with one: members, states, workspaces, open channels, pending asks, unread reports |
+| `add_member` / `remove_member` | change a live team without re-drawing everyone; removed members stay in the record and stay ratable |
+| `open_mailbox` / `close_mailbox` | wire or shut a channel mid-flight; a closed channel keeps its log |
+| `worktrees` | list or prune the git worktrees members work in |
 | `read_channel` | mailbox traffic or reports, on demand — plain JSONL, analyze freely |
 | `message_member` | quartermaster-to-member guidance; `steer` interrupts mid-run |
 | `rate_member` | outcome rating by member → weighted evidence (rate at return-time) |
 | `set_cost` / `set_override` | durable facts with provenance |
 | `pending_asks` / `resolve_ask` | permission asks; escalate-only needs the user's words |
 | `dissolve_team` | collect, dispose, keep the record |
+
+Members that can write work in their own git worktree on their own
+branch, so nothing overwrites anything, including your tree
+(`.pi/team/worktrees.jsonc` declares what a fresh tree needs).
 
 Members get `report`, `send`, and `request_permission` — their only
 channels. Reports carry tracking numbers (`r1, r2, ...`), messages too

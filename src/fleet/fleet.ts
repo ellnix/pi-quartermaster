@@ -68,6 +68,12 @@ interface FleetMember {
 	treeReleased?: boolean;
 	/** Messages waiting for this member's current run to finish. */
 	pendingDelivery: Array<{ text: string }>;
+	/**
+	 * Channel changes since the member last heard from the engine, delivered
+	 * for free as a preface to its next incoming message (an unstarted member
+	 * learns them from its standing instructions instead).
+	 */
+	notices: string[];
 }
 
 /**
@@ -100,6 +106,10 @@ export class Fleet {
 	/** Serialized creation: the child marker is process-global. */
 	private creationChain: Promise<void> = Promise.resolve();
 	private trees: WorktreeManager;
+	/** The project's worktrees.jsonc declares setup or copy, but the project is not trusted: they are skipped. */
+	private untrustedSetup: boolean;
+	/** Reports the quartermaster has read (read_channel "reports"); the rest are "unread". */
+	private reportsSeen = 0;
 
 	constructor(
 		private ctx: ExtensionToolContext,
@@ -107,7 +117,13 @@ export class Fleet {
 		private evidence: EvidenceStore,
 		private overrides: Overrides,
 	) {
-		this.trees = new WorktreeManager(ctx.cwd, config.worktrees);
+		// `setup` is shell from the repository's own config. pi gates project
+		// config on trust for exactly this reason; so does this: an untrusted
+		// project's worktrees.jsonc still places members, but runs nothing.
+		const wt = config.worktrees;
+		this.untrustedSetup =
+			wt.filePath !== undefined && (wt.setup.length > 0 || wt.copy.length > 0) && ctx.isProjectTrusted?.() === false;
+		this.trees = new WorktreeManager(ctx.cwd, this.untrustedSetup ? { ...wt, setup: [], copy: [] } : wt);
 	}
 
 	get convened(): boolean {
@@ -278,6 +294,7 @@ export class Fleet {
 				spec,
 				state: "convening",
 				pendingDelivery: [],
+				notices: [],
 			};
 			this.members.set(member.name, member);
 
@@ -421,6 +438,11 @@ export class Fleet {
 			return { ...tree, mode: "attach", attachedTo: owner.name, provisioned: undefined };
 		}
 
+		if (this.untrustedSetup) {
+			warnings.push(
+				`${member.name}: .pi/team/worktrees.jsonc declares setup/copy, but this project is not trusted, so nothing was run or copied and its tree is bare. Trust the project in pi to enable provisioning.`,
+			);
+		}
 		try {
 			return await this.trees.create(this.teamId!, member.name);
 		} catch (err) {
@@ -454,7 +476,7 @@ export class Fleet {
 			];
 		}
 		const setup = tree.provisioned;
-		const bare = (this.config.worktrees?.setup.length ?? 0) === 0 && (setup?.copied.length ?? 0) === 0;
+		const bare = this.untrustedSetup || ((this.config.worktrees?.setup.length ?? 0) === 0 && (setup?.copied.length ?? 0) === 0);
 		return [
 			"YOUR WORKSPACE:",
 			`- You work in your own git worktree, ${tree.cwd}, on branch ${tree.branch} (started from ${tree.base?.slice(0, 9)}). It is isolated: the user's working tree and other members' trees are separate, so do not reach into them.`,
@@ -488,6 +510,7 @@ export class Fleet {
 	private startMember(member: FleetMember, task: string): void {
 		if (!member.session) return;
 		member.state = "working";
+		member.notices = [];
 		const team = [...this.members.values()]
 			.filter((m) => m.state !== "removed" && m.name !== member.name)
 			.map((m) => ({ name: m.name, description: m.agent.description.split("\n")[0] }));
@@ -524,7 +547,8 @@ export class Fleet {
 			body,
 		});
 		this.deliver(recipient, channel.id, channel.from, channel.to, body, "followUp", entry.id);
-		return { id: entry.id };
+		const back = [...this.channels.values()].find((c) => !c.closed && c.from === channel.to && c.to === member.name);
+		return { id: entry.id, replyChannel: back?.id };
 	}
 
 	/**
@@ -604,7 +628,13 @@ export class Fleet {
 			`A message${id ? ` (${id})` : ""} arrives via ${channel === "quartermaster" ? "the Quartermaster" : `the ${channelLabel} mailbox`} from ${from}.`,
 			preamble ? `\n${preamble}\n` : "",
 		].join("\n");
-		const text = `${framing}\n${body}`;
+		// Channel changes ride along with the next message for free. An unstarted
+		// member gets the whole current picture in its standing instructions.
+		const notices = recipient.notices.splice(0);
+		const preface = notices.length > 0 && recipient.state !== "unstarted"
+			? `CHANNEL CHANGES since you last heard from the Quartermaster:\n${notices.map((n) => `- ${n}`).join("\n")}\n\n`
+			: "";
+		const text = `${preface}${framing}\n${body}`;
 
 		if (recipient.state === "unstarted") {
 			// First input starts the member. There is nothing to steer, so
@@ -666,16 +696,21 @@ export class Fleet {
 			return { ok: false, message: `${agent.name} was not added; the team is unchanged`, warnings };
 		}
 		member.addedAt = Date.now();
+		const before = new Set(this.channels.keys());
 		for (const wiring of wirings) {
 			warnings.push(...this.openChannel(wiring, this.isMultiWired(wiring.name, wirings)));
+		}
+		for (const channel of this.channels.values()) {
+			if (!before.has(channel.id)) this.noteChannel(channel, "opened");
 		}
 		this.logAdded(member, "add_member");
 		const task = input.task?.trim() ?? "";
 		if (task !== "") this.startMember(member, task);
 		return {
 			ok: true,
-			message: `added ${member.name} on ${member.modelId}${task === "" ? " (idle, not started — its first message starts it)" : ""}. Existing members were not told of any new channels.`,
-			warnings,
+			// Several draws can raise the same note; one line each.
+			warnings: [...new Set(warnings)],
+			message: `added ${member.name} on ${member.modelId}${task === "" ? " (idle, not started — its first message starts it)" : ""}. Existing members hear of any new channels at their next message.`,
 		};
 	}
 
@@ -696,6 +731,7 @@ export class Fleet {
 		// warnings; success is a new channel, or the revived one now open.
 		const channel = revived && !revived.closed ? revived : [...this.channels.values()].find((c) => !before.has(c.id));
 		if (!channel) return { ok: false, message: `mailbox not opened: ${warnings.join("; ") || "unknown reason"}` };
+		this.noteChannel(channel, "opened");
 		appendComposition(this.recordPath!, {
 			type: "channel_opened",
 			ts: Date.now(),
@@ -707,7 +743,7 @@ export class Fleet {
 		});
 		return {
 			ok: true,
-			message: `${revived ? "reopened" : "opened"} ${channel.id} (${channel.from} -> ${channel.to}). ${channel.from} can send through it from its next send; neither member is told, so message them if they should know.`,
+			message: `${revived ? "reopened" : "opened"} ${channel.id} (${channel.from} -> ${channel.to}). Both members are told at their next message (a member not yet started learns it from its standing instructions).`,
 			warnings,
 		};
 	}
@@ -735,6 +771,7 @@ export class Fleet {
 		const channel = matches[0];
 		if (channel.closed) return { ok: false, message: `${channel.id} is already closed` };
 		channel.closed = true;
+		this.noteChannel(channel, "closed");
 		appendComposition(this.recordPath!, {
 			type: "channel_closed",
 			ts: Date.now(),
@@ -947,9 +984,28 @@ export class Fleet {
 			members,
 			openMailboxes: [...this.channels.values()].filter((c) => !c.closed).map((c) => `${c.id} (${c.from} -> ${c.to})`),
 			pendingAsks: this.recordPath ? pendingAsks(this.recordPath).length : 0,
-			unreadReports: this.recordPath ? readReports(this.recordPath).length : 0,
-			warnings: extraWarnings,
+			unreadReports: this.recordPath ? Math.max(0, readReports(this.recordPath).length - this.reportsSeen) : 0,
+			// The same warning from several members (an exclusion note, say) is one warning.
+			warnings: [...new Set(extraWarnings)],
 		};
+	}
+
+	/** The quartermaster has read the reports so far; "unread" counts only newer ones. */
+	markReportsRead(): void {
+		if (this.recordPath) this.reportsSeen = readReports(this.recordPath).length;
+	}
+
+	/** Tell both ends of a channel what changed, at their next message. */
+	private noteChannel(channel: OpenChannel, what: "opened" | "closed"): void {
+		const from = this.active(channel.from);
+		const to = this.active(channel.to);
+		if (what === "opened") {
+			from?.notices.push(`You can now send to ${channel.to} through the mailbox ${channel.id} (send tool).`);
+			to?.notices.push(`${channel.from} may now send you messages through the mailbox ${channel.id}.`);
+		} else {
+			from?.notices.push(`The mailbox ${channel.id} to ${channel.to} is closed; sends through it are refused.`);
+			to?.notices.push(`The mailbox ${channel.id} from ${channel.from} is closed; nothing more will arrive on it.`);
+		}
 	}
 
 	async dissolve(): Promise<TeamStatus> {
@@ -976,6 +1032,7 @@ export class Fleet {
 			}
 			warnings.push(...(await this.releaseTree(member)));
 		}
+		for (const channel of this.channels.values()) channel.closed = true;
 		const dissolved = this.status(warnings);
 		// The record persists: a reconvened team reads it as its blackboard.
 		this.members.clear();

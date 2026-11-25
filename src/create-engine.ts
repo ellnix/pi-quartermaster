@@ -9,6 +9,7 @@ import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import type {
 	Ack,
 	AddMemberInput,
+	WorktreesInput,
 	CloseMailboxInput,
 	OpenMailboxInput,
 	ConveneInput,
@@ -25,6 +26,7 @@ import type {
 	TeamStatus,
 	WakeSource,
 } from "./engine.ts";
+import { WorktreeManager, worktreesReport } from "./fleet/worktrees.ts";
 import { composeEngine } from "./compose-engine.ts";
 import { loadConfig, type QuartermasterConfig } from "./config/index.ts";
 import { loadEvidence, recordOutcome, type EvidenceStore } from "./matching/evidence.ts";
@@ -130,6 +132,12 @@ export function createEngine(ctx: ExtensionToolContext): QuartermasterEngine {
 				.sort((a, b) => a.ts - b.ts)
 				.slice(-tail);
 			return { channel: input.channel, messages: entries, warnings: [] };
+		},
+
+		worktrees: async (input: WorktreesInput): Promise<Ack> => {
+			// Works without a convened team: the janitor exists for what earlier sessions left.
+			if (state.fleet?.convened) return state.fleet.worktrees(input);
+			return worktreesReport(new WorktreeManager(state.ctx.cwd, state.config.worktrees), new Set(), input);
 		},
 
 		addMember: async (input: AddMemberInput): Promise<Ack> => {

@@ -67,6 +67,12 @@ The user's answers, not defaults, decide the team.
    should name the variants, not rely on positions: if the file's own
    `name` should stay addressable, list it too.
 
+   `worktree:` (optional) says where the agent works: `per-member` (its
+   own git worktree and branch; the default for any agent granted `edit`
+   or `write`), `shared` (the user's tree, for a member that must see
+   uncommitted work) or `attach` (reads another member's worktree; only
+   for read-only agents). Leave it out unless overriding that default.
+
    Rules: `tools` is the pre-approved surface — grant `edit` and `write`
    only to builders; absence means read-only defaults. Every agent needs
    a spec (inline in frontmatter — weights, temperature, filters) or a
@@ -107,6 +113,26 @@ The user's answers, not defaults, decide the team.
    file), so write one generic template per relationship kind, not one
    per pair. Wiring the same template with the same endpoints twice is
    an error.
+5b. **If the repo needs provisioning, write `.pi/team/worktrees.jsonc`.** A
+   fresh worktree has no `vendor/`, `node_modules/` or `.env`, so declare
+   what a member needs once:
+
+   ```jsonc
+   {
+     "base": "develop",                       // branch worktrees start from (default: HEAD)
+     "setup": ["composer install --no-interaction", "npm ci"],
+     "copy": [".env", ".env.testing"],        // exact untracked files, copied before setup
+     "keepOnDissolve": false
+   }
+   ```
+
+   Ask the user what a clean checkout needs to run the tests. `copy`
+   takes exact relative paths only: it never copies anything it was not
+   told about, so never list secrets the members do not need. `setup`
+   commands run with the same authority as a member's `bash`, so treat
+   the file like a Makefile. A failure removes the tree and fails that
+   member's spawn. Skip the file for repos that need nothing; members are
+   then told their tree is bare.
 6. **Optionally write `team/authority.jsonc`** — which tool categories
    the quartermaster may approve alone versus which always escalate, plus
    the optional `matching` section (`costLambda`, default 0.15; `priorStrength`, default 6) and

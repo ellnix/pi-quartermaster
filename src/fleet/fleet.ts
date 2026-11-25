@@ -25,6 +25,8 @@ import {
 import type {
 	Ack,
 	AddMemberInput,
+	WorkspaceInput,
+	WorktreesInput,
 	CloseMailboxInput,
 	OpenMailboxInput,
 	ConveneInput,
@@ -41,6 +43,7 @@ import { drawForSpec, type Candidate } from "../matching/matcher.ts";
 import type { EvidenceStore } from "../matching/evidence.ts";
 import type { Overrides } from "../matching/overrides.ts";
 import { recordDir } from "../config/paths.ts";
+import { NotGitError, WorktreeManager, worktreesReport, type Placement } from "./worktrees.ts";
 import { crewmanTools, type CrewHooks, type SendReceipt } from "./crewman.ts";
 import { appendAsk, appendChannel, appendComposition, appendResolution, askResolution, ensureRecord, pendingAsks, readReports } from "./record.ts";
 
@@ -59,6 +62,10 @@ interface FleetMember {
 	addedAt?: number;
 	removedAt?: number;
 	removedReason?: string;
+	/** Where the member works; absent means the user's own tree. */
+	placement?: Placement;
+	/** The worktree has been removed (or deliberately kept) and must not be handled again. */
+	treeReleased?: boolean;
 	/** Messages waiting for this member's current run to finish. */
 	pendingDelivery: Array<{ text: string }>;
 }
@@ -92,13 +99,16 @@ export class Fleet {
 	private channels = new Map<string, OpenChannel>();
 	/** Serialized creation: the child marker is process-global. */
 	private creationChain: Promise<void> = Promise.resolve();
+	private trees: WorktreeManager;
 
 	constructor(
 		private ctx: ExtensionToolContext,
 		private config: QuartermasterConfig,
 		private evidence: EvidenceStore,
 		private overrides: Overrides,
-	) {}
+	) {
+		this.trees = new WorktreeManager(ctx.cwd, config.worktrees);
+	}
 
 	get convened(): boolean {
 		return this.teamId !== undefined;
@@ -149,7 +159,7 @@ export class Fleet {
 				warnings.push(`member "${agent.name}" listed twice — second occurrence skipped`);
 				continue;
 			}
-			const member = await this.spawnMember(agent, request.spec, warnings);
+			const member = await this.spawnMember(agent, request.spec, request, warnings);
 			if (member) starts.push({ member, task: request.task?.trim() ?? "" });
 		}
 
@@ -205,6 +215,9 @@ export class Fleet {
 			model: member.modelId,
 			dimensions: rating?.dimensions,
 			via,
+			worktree: member.placement && member.placement.mode !== "shared"
+				? { mode: member.placement.mode, path: member.placement.path, branch: member.placement.branch, base: member.placement.base, attachedTo: member.placement.attachedTo }
+				: undefined,
 			by: "quartermaster",
 		});
 	}
@@ -241,6 +254,7 @@ export class Fleet {
 	private async spawnMember(
 		agent: AgentDef,
 		specOverride: SpecOverrideInput | undefined,
+		workspace: WorkspaceInput,
 		warnings: string[],
 		dropOnFailure = false,
 	): Promise<FleetMember | undefined> {
@@ -289,6 +303,17 @@ export class Fleet {
 				return;
 			}
 
+			// Placement comes after the draw so a failed draw leaves no tree
+			// behind, and before the session so its cwd can be the tree.
+			let placement: Placement | undefined;
+			try {
+				placement = await this.place(member, workspace, warnings);
+			} catch (err) {
+				fail(err instanceof Error ? err.message : String(err));
+				return;
+			}
+			member.placement = placement;
+
 			process.env[CHILD_MARKER] = "1";
 			let session: AgentSession;
 			try {
@@ -300,11 +325,15 @@ export class Fleet {
 					onSend: (mailbox, body) => this.routeSend(member, mailbox, body),
 					onAsk: (tool, args, why) => this.registerAsk(member, tool, args, why),
 					isActive: () => member.state !== "removed" && member.state !== "dissolved",
+					workspace: () =>
+						member.placement && member.placement.mode !== "shared"
+							? { branch: member.placement.branch, worktree: member.placement.path }
+							: undefined,
 				};
 				const tools = crewmanTools(member.name, this.recordPath!, hooks);
 				const allowlist = [...new Set([...(agent.tools ?? DEFAULT_TOOLS), ...tools.map((t) => t.name)])];
 				const created = await createAgentSession({
-					cwd: this.ctx.cwd,
+					cwd: placement?.cwd ?? this.ctx.cwd,
 					model,
 					tools: allowlist,
 					customTools: tools,
@@ -313,6 +342,11 @@ export class Fleet {
 				session = created.session;
 			} catch (err) {
 				fail(`child session failed to start: ${String(err)}`);
+				// A tree made for a member that never started must not linger.
+				if (placement?.mode === "per-member") {
+					member.treeReleased = true;
+					warnings.push(...(await this.trees.remove(placement, { discardDirty: true })));
+				}
 				return;
 			} finally {
 				delete process.env[CHILD_MARKER];
@@ -349,6 +383,107 @@ export class Fleet {
 			});
 	}
 
+	/**
+	 * Decide and make a member's workspace. Mode precedence: the convene's own
+	 * `worktree`, then the agent file's, then the project default (`auto`: its
+	 * own tree if it can write, the user's tree if not). Returns undefined for
+	 * the user's tree. Throws to fail the spawn: a half-provisioned or refused
+	 * placement must never become a member quietly running in the wrong place.
+	 */
+	private async place(member: FleetMember, ws: WorkspaceInput, warnings: string[]): Promise<Placement | undefined> {
+		const agent = member.agent;
+		const writes = (agent.tools ?? DEFAULT_TOOLS).some((t) => t === "edit" || t === "write");
+		const defaults = this.config.worktrees?.default ?? "auto";
+		const mode = ws.worktree ?? agent.worktree ?? (defaults === "auto" && writes ? "per-member" : "shared");
+
+		if (ws.attachTo !== undefined && mode !== "attach") {
+			warnings.push(`${member.name}: attachTo is only used with worktree "attach" — ignored`);
+		}
+		if (mode === "shared") return undefined;
+
+		if (mode === "attach") {
+			if (writes) {
+				throw new Error(
+					`${member.name} is granted edit or write, so it may not attach to another member's worktree; use a read-only tool grant, or give it its own (worktree: per-member)`,
+				);
+			}
+			if (!ws.attachTo) {
+				throw new Error(`${member.name} is set to attach but names no owner: pass attachTo with the member whose worktree it joins`);
+			}
+			const owner = this.active(ws.attachTo);
+			if (!owner) {
+				throw new Error(`attachTo "${ws.attachTo}" is not an active member (list the owner before the members that attach to it)`);
+			}
+			const tree = owner.placement;
+			if (tree?.mode !== "per-member") {
+				throw new Error(`"${ws.attachTo}" has no worktree of its own to attach to (it works in the shared tree or is itself attached)`);
+			}
+			return { ...tree, mode: "attach", attachedTo: owner.name, provisioned: undefined };
+		}
+
+		try {
+			return await this.trees.create(this.teamId!, member.name);
+		} catch (err) {
+			if (err instanceof NotGitError) {
+				warnings.push(
+					`${member.name} runs in the SHARED tree: ${err.message}, so there is nothing to isolate it from. Its edits land directly in your working directory.`,
+				);
+				return undefined;
+			}
+			throw err;
+		}
+	}
+
+	/** Remove a member's own worktree (never an attached view of someone else's), once. */
+	private async releaseTree(member: FleetMember, opts: { discardDirty?: boolean } = {}): Promise<string[]> {
+		const tree = member.placement;
+		if (!tree || tree.mode !== "per-member" || member.treeReleased) return [];
+		member.treeReleased = true;
+		return this.trees.remove(tree, opts);
+	}
+
+	/** The standing instructions' WORKSPACE section; empty when the member works in the user's tree. */
+	private workspaceLines(member: FleetMember): string[] {
+		const tree = member.placement;
+		if (!tree || tree.mode === "shared") return [];
+		if (tree.mode === "attach") {
+			return [
+				"YOUR WORKSPACE:",
+				`- Your working directory is ${tree.cwd}, the worktree of ${tree.attachedTo} (branch ${tree.branch}). You are attached to read it. Do not modify anything in it: ${tree.attachedTo} is still working there.`,
+				"- You may read, run tests and inspect git history. If something needs changing, say so to its owner or in a report.",
+			];
+		}
+		const setup = tree.provisioned;
+		const bare = (this.config.worktrees?.setup.length ?? 0) === 0 && (setup?.copied.length ?? 0) === 0;
+		return [
+			"YOUR WORKSPACE:",
+			`- You work in your own git worktree, ${tree.cwd}, on branch ${tree.branch} (started from ${tree.base?.slice(0, 9)}). It is isolated: the user's working tree and other members' trees are separate, so do not reach into them.`,
+			"- Commit your work to your branch. Never push, and never switch branches or change the base. Anything you leave uncommitted stays only in this tree.",
+			"- Your report should state your branch and what is committed on it; the Quartermaster compares branches with git diff.",
+			bare
+				? "- No setup is declared for this repository (.pi/team/worktrees.jsonc), so this tree is bare: dependencies (vendor/, node_modules/) and untracked files such as .env are NOT present. Install what you need or say so in a report."
+				: `- Provisioned before you started: ${[...(setup?.copied.length ? [`copied ${setup.copied.join(", ")}`] : []), ...(setup?.setup ?? []).map((c) => `ran "${c}"`)].join("; ")}.`,
+		];
+	}
+
+	/** The `worktrees` tool: list this repository's quartermaster trees, or prune the unclaimed ones. */
+	async worktrees(input: WorktreesInput): Promise<Ack> {
+		const live = this.convened ? this.liveBranches() : new Set<string>();
+		const result = await worktreesReport(this.trees, live, input);
+		return result;
+	}
+
+	/** Branches of this session's active per-member trees: the janitor never prunes these. */
+	liveBranches(): Set<string> {
+		const live = new Set<string>();
+		for (const m of this.members.values()) {
+			if (m.state !== "removed" && m.state !== "dissolved" && m.placement?.mode === "per-member" && m.placement.branch) {
+				live.add(m.placement.branch);
+			}
+		}
+		return live;
+	}
+
 	/** Start a member's first run: standing instructions and channels, then the task. */
 	private startMember(member: FleetMember, task: string): void {
 		if (!member.session) return;
@@ -356,7 +491,14 @@ export class Fleet {
 		const team = [...this.members.values()]
 			.filter((m) => m.state !== "removed" && m.name !== member.name)
 			.map((m) => ({ name: m.name, description: m.agent.description.split("\n")[0] }));
-		const prompt = assembleSpawnPrompt(member.name, member.agent, task, this.channelsForMember(member.name), team);
+		const prompt = assembleSpawnPrompt(
+			member.name,
+			member.agent,
+			task,
+			this.channelsForMember(member.name),
+			team,
+			this.workspaceLines(member),
+		);
 		this.track(member, member.session.prompt(prompt), "run");
 	}
 
@@ -519,7 +661,7 @@ export class Fleet {
 		if (duplicate) return { ok: false, message: duplicate };
 
 		const warnings: string[] = [];
-		const member = await this.spawnMember(agent, input.spec, warnings, true);
+		const member = await this.spawnMember(agent, input.spec, input, warnings, true);
 		if (!member) {
 			return { ok: false, message: `${agent.name} was not added; the team is unchanged`, warnings };
 		}
@@ -630,6 +772,16 @@ export class Fleet {
 			};
 		}
 
+		const readers = [...this.members.values()].filter(
+			(m) => m.state !== "removed" && m.placement?.mode === "attach" && m.placement.attachedTo === member.name,
+		);
+		if (readers.length > 0) {
+			return {
+				ok: false,
+				message: `${input.member} was not removed: ${readers.map((m) => m.name).join(", ")} ${readers.length > 1 ? "are" : "is"} attached to its worktree. Remove ${readers.length > 1 ? "them" : "it"} first.`,
+			};
+		}
+
 		for (const ask of asks) {
 			appendResolution(this.recordPath!, {
 				ts: Date.now(),
@@ -661,6 +813,8 @@ export class Fleet {
 		for (const channel of this.channels.values()) {
 			if (channel.from === member.name || channel.to === member.name) channel.closed = true;
 		}
+		// Its tree goes with it unless it holds uncommitted work or commits, which are kept.
+		warnings.push(...(await this.releaseTree(member)));
 		const rating = this.memberForRating(member.name);
 		appendComposition(this.recordPath!, {
 			type: "removed",
@@ -779,6 +933,10 @@ export class Fleet {
 			model: m.modelId,
 			state: m.state,
 			note: m.note,
+			workspace:
+				m.placement && m.placement.mode !== "shared"
+					? { mode: m.placement.mode, path: m.placement.path, branch: m.placement.branch, attachedTo: m.placement.attachedTo }
+					: undefined,
 			addedAt: m.addedAt,
 			removedAt: m.removedAt,
 			removedReason: m.removedReason,
@@ -808,6 +966,16 @@ export class Fleet {
 			member.session = undefined;
 			member.state = "dissolved";
 		}
+		// Trees after every session is down. Removed members already released theirs.
+		for (const member of this.members.values()) {
+			if (member.placement?.mode !== "per-member" || member.treeReleased) continue;
+			if (this.config.worktrees?.keepOnDissolve) {
+				member.treeReleased = true;
+				warnings.push(`kept worktree ${member.placement.path} (branch ${member.placement.branch}): keepOnDissolve is set`);
+				continue;
+			}
+			warnings.push(...(await this.releaseTree(member)));
+		}
 		const dissolved = this.status(warnings);
 		// The record persists: a reconvened team reads it as its blackboard.
 		this.members.clear();
@@ -830,6 +998,7 @@ function assembleSpawnPrompt(
 	task: string,
 	channels: { outbound: OpenChannel[]; inbound: OpenChannel[] },
 	team: Array<{ name: string; description: string }> = [],
+	workspace: string[] = [],
 ): string {
 	const lines = [
 		`You are ${memberName}, a member of a team convened by the Quartermaster.`,
@@ -852,6 +1021,11 @@ function assembleSpawnPrompt(
 		for (const ch of channels.outbound) {
 			lines.push(`- ${ch.id} -> ${ch.to}`);
 		}
+		lines.push(
+			"These mailboxes are sanctioned by the Quartermaster: you are expected to use them, and doing so lightens its load. " +
+				"When you need a clarification, a finding relayed, or context a crewmate holds, send it straight to them rather than waiting on the Quartermaster or guessing. " +
+				"The recipient already knows who you are and is ready for your messages; do not introduce yourself, just say what you need.",
+		);
 	}
 	if (channels.inbound.length > 0) {
 		lines.push("", "CHANNELS THAT MAY DELIVER TO YOU:");
@@ -859,6 +1033,7 @@ function assembleSpawnPrompt(
 			lines.push(`- ${ch.id} <- ${ch.from}`);
 		}
 	}
+	if (workspace.length > 0) lines.push("", ...workspace);
 	lines.push("", "YOUR TASK:", task);
 	return lines.join("\n");
 }

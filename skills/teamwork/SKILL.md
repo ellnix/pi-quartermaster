@@ -207,6 +207,36 @@ same arguments to `add_member`, then `open_mailbox` to wire it in.
 | Skip the ratings | Evidence is lost and the next draw is uninformed (see Ratings) |
 | Dissolve and reconvene to add one specialist | Every draw is lost; use `add_member` |
 
+## Working trees
+
+Members that can write (`edit`/`write` in their tools) each get their
+own git worktree and branch, `quartermaster/<team>/<member>`, so nobody
+overwrites anyone, including the user. Read-only members share the
+user's tree.
+
+- **Review in the builder's tree**: add the reviewer with
+  `worktree: "attach"` and `attachTo: "<builder>"` (list the builder
+  first). It sees the tree and cannot dirty it: attach is refused for any
+  agent granted `edit` or `write`. Tell it to wait for the builder's
+  report, since it sees only what is on disk.
+- **Racing**: two builders (variants of one file) get two branches. When
+  both report, compare branches, not trees:
+  `git diff <base>...quartermaster/<team>/<a>` against `<b>`. Keep the
+  winner (merge it yourself; members never push) and `remove_member` the
+  loser. Branches with commits are kept, so the loser's work stays
+  inspectable.
+- Every report carries the member's `branch` and `worktree`; read them
+  with `read_channel "reports"`.
+- `worktrees` lists what exists (live or unclaimed, clean or dirty) and
+  prunes the unclaimed: `worktrees {prune: true, team: "<id>"}`. List
+  after a session ends; leftovers are what accumulate.
+- A dirty tree is never discarded silently: it survives removal and
+  dissolve, and you will see "kept ... uncommitted changes". Decide what
+  to do with it; do not reach for `discardDirty` by reflex.
+- Outside a git repository members share the user's tree and the
+  convene result says so loudly. Do not give a write grant to a member
+  you cannot isolate unless the user accepts that.
+
 ## While the team works
 
 - **Clarifications flow through mailboxes; reports flow to you.** Relay

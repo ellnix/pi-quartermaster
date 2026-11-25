@@ -210,6 +210,17 @@ under the same id. A
 removed member stays in the roster as history; its channels are marked
 closed (no delivery, logs kept) and its runtime session is disposed.
 
+Workspaces: a member that can write is placed in its own `git worktree`
+(`quartermaster/<team>/<member>`, from the configured base), and its
+session's cwd is that path, so every tool is isolated with no change to
+the tools themselves. Readers `attach` to an owner's path. Provisioning
+(`copy`, `setup`) is declared once per repository in
+`.pi/team/worktrees.jsonc` and run before the member starts; failure
+removes the tree. The mechanics shell out to `git worktree` and let git
+report its own errors. Invariants: the primary tree's HEAD, index and
+branch are never touched; nothing is pushed; uncommitted work and
+branches with commits are never destroyed silently.
+
 Agent definitions likewise: a file may declare `variants`, each an
 addressable agent sharing the file's prompt and tools, with its spec
 deep-merged over the file's. Variants expand at load time, so everything

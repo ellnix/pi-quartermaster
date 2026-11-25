@@ -13,12 +13,44 @@
   draw. `priorStrength: 1` is the closest to the old behaviour. `minScores`
   gates are unchanged.
 
+### Changed
+- Crewmen are told what their mailboxes are for: they are sanctioned by the
+  Quartermaster, using them lightens its load, and the recipient already
+  knows the sender, so no introductions are needed. The statement appears
+  in the member's standing instructions (whenever it has an outbound
+  channel) and in the `send` tool description.
+
 ### Added
+- Per-member git worktrees. A member that can write (`edit`/`write` in its
+  tools) now works in its own worktree on its own branch,
+  `quartermaster/<team>/<member>`, started from `HEAD` (or the configured
+  base), so one member's blunt command can no longer touch your tree or
+  another member's. The session's cwd is the tree. Read-only members share
+  your tree as before. Agent frontmatter `worktree: shared | per-member |
+  attach` and the convene / `add_member` fields `worktree` and `attachTo`
+  override this; `attach` places a read-only member in another member's
+  tree. The primary tree's HEAD, index and branch are never touched,
+  members are told never to push, and reports carry the branch and path.
+  Racing two builders now gives two branches and a real diff.
+- `.pi/team/worktrees.jsonc` declares provisioning once: `base`, `setup`
+  commands (run once per tree, in it, with a timeout), `copy` of exact
+  untracked files from your tree (`.env`), `keepOnDissolve`, `location`
+  (`tmp`, or `repo` under `.quartermaster/`), and `default`. A failed copy
+  or setup removes the worktree and fails that member's spawn, naming the
+  cause; no half-provisioned trees. With no config the tree is created bare
+  and the member is told so.
+- Lifecycle: trees persist while a member is idle, and are removed with the
+  member or at dissolve unless dirty (uncommitted work is kept and reported)
+  or `keepOnDissolve`; a branch with commits is never deleted. A new
+  `worktrees` tool lists every quartermaster tree of the repository (team,
+  branch, clean or dirty, commits ahead, live or unclaimed) and prunes
+  unclaimed ones, which works with no team convened. Outside a git
+  repository members fall back to your tree with a loud warning.
 - `team_list` with no team convened now lists the configured agents
   (description, tools, spec) and mailbox templates (description), so a convene
   is planned from what the user actually has.
 - teamwork skill: worked examples (single member, implementer+reviewer pair,
-  exploration-first trio, specialists), written with placeholder roles with real `convene_team` arguments and the
+  exploration-first trio, specialists), written with placeholder roles, real `convene_team` arguments and the
   anti-patterns each avoids, plus `skills/teamwork/agent-files.md`, a
   field-by-field agent file reference with a prompt-body skeleton.
 - `open_mailbox` and `close_mailbox`: manage channels on a live team,

@@ -38,6 +38,7 @@ import {
 	type SetCostInput,
 	type SetOverrideInput,
 	type AddMemberInput,
+	type WorktreesInput,
 	type CloseMailboxInput,
 	type OpenMailboxInput,
 	type RemoveMemberInput,
@@ -53,7 +54,7 @@ function text(body: string): { content: { type: "text"; text: string }[]; detail
 }
 
 function ackText(ack: Ack): { content: { type: "text"; text: string }[]; details: unknown } {
-	const body = ack.ok ? ack.message : `${ack.message}${ack.warnings?.length ? `\nwarnings: ${ack.warnings.join("; ")}` : ""}`;
+	const body = `${ack.message}${ack.warnings?.length ? `\nwarnings: ${ack.warnings.join("; ")}` : ""}`;
 	return text(body);
 }
 
@@ -83,6 +84,9 @@ function teamText(status: TeamStatus): { content: { type: "text"; text: string }
 					? ` added ${stamp(m.addedAt)}`
 					: "";
 			lines.push(`- ${m.name}${m.definition ? ` (${m.definition})` : ""} [${m.state === "unstarted" ? "idle (not started)" : m.state}${marker}] ${m.model ? `on ${m.model}` : "(no model drawn)"} — ${m.description}${m.note ? ` (${m.note})` : ""}`);
+			if (m.workspace) {
+				lines.push(`    ${m.workspace.mode === "attach" ? `attached to ${m.workspace.attachedTo}'s worktree` : `worktree on ${m.workspace.branch}`} at ${m.workspace.path}`);
+			}
 		}
 		if (status.openMailboxes.length) {
 			lines.push(`Open mailboxes: ${status.openMailboxes.join(", ")}`);
@@ -112,6 +116,18 @@ function channelText(result: ReadChannelResult): { content: { type: "text"; text
 	for (const w of result.warnings) lines.push(`warning: ${w}`);
 	return text(lines.length ? lines.join("\n") : `No traffic on ${result.channel}.`);
 }
+
+const WORKSPACE_FIELDS = {
+	worktree: Type.Optional(
+		Type.Union([Type.Literal("shared"), Type.Literal("per-member"), Type.Literal("attach")], {
+			description:
+				"Where this member works. per-member: its own git worktree and branch (default for agents that can edit/write). " +
+				"shared: the user's own tree, for members that must see uncommitted work. attach: placed in another member's worktree " +
+				"(read-only agents only; needs attachTo). Omit to use the agent file's setting.",
+		}),
+	),
+	attachTo: Type.Optional(Type.String({ description: "For worktree: attach, the member whose worktree to join. Convene the owner earlier in the list." })),
+};
 
 const SPEC_OVERRIDE = Type.Object(
 							{
@@ -211,6 +227,7 @@ export default function quartermaster(pi: ExtensionAPI): void {
 				Type.Object({
 					agent: Type.String({ description: "Agent definition name (from the agent dir: team/agents/, or the project .pi/agents/)." }),
 					spec: Type.Optional(SPEC_OVERRIDE),
+					...WORKSPACE_FIELDS,
 					task: Type.Optional(Type.String({ description: "The initial task for this member. Self-contained enough to start from. Omit or \"\" to convene idle (not started); the first message_member starts it. Whitespace-only is an error." })),
 				}),
 				{ minItems: 1 },
@@ -367,6 +384,7 @@ export default function quartermaster(pi: ExtensionAPI): void {
 		parameters: Type.Object({
 			agent: Type.String({ description: "Agent or variant name." }),
 			spec: Type.Optional(SPEC_OVERRIDE),
+			...WORKSPACE_FIELDS,
 			task: Type.Optional(Type.String({ description: "Initial task. Omit or \"\" to add idle. Whitespace-only is an error." })),
 			mailboxes: Type.Optional(
 				Type.Array(
@@ -396,6 +414,25 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			force: Type.Optional(Type.Boolean({ description: "Interrupt a working member and deny its pending asks." })),
 		}),
 		execute: async (_id, params: RemoveMemberInput, _sig, _up, ctx) => ackText(await getEngine(ctx).removeMember(params)),
+	});
+
+	pi.registerTool({
+		name: "worktrees",
+		label: "Worktrees",
+		description:
+			"List the git worktrees quartermaster created for this repository (team, member, branch, path, " +
+			"clean or dirty, commits ahead, live or unclaimed), or prune the ones nobody claims. Members that can " +
+			"write each get their own worktree and branch so they cannot disturb the user's tree or each other; " +
+			"compare their work with git diff <base>...<branch>. Pruning needs a scope (team id, or all) because " +
+			"another running session's trees look unclaimed from here. It keeps trees with uncommitted changes " +
+			"unless discardDirty, and branches with commits are never deleted.",
+		parameters: Type.Object({
+			prune: Type.Optional(Type.Boolean({ description: "Remove unclaimed worktrees instead of listing." })),
+			team: Type.Optional(Type.String({ description: "With prune: only this team id's trees." })),
+			all: Type.Optional(Type.Boolean({ description: "With prune: every team's unclaimed trees." })),
+			discardDirty: Type.Optional(Type.Boolean({ description: "With prune: also remove trees with uncommitted changes." })),
+		}),
+		execute: async (_id, params: WorktreesInput, _sig, _up, ctx) => ackText(await getEngine(ctx).worktrees(params)),
 	});
 
 	pi.registerTool({

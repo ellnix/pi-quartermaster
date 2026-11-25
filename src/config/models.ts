@@ -8,6 +8,9 @@
  * through the tools land in overrides.yaml instead, and the matcher
  * joins catalog cost, this file, and overrides with that precedence.
  *
+ * Scores are a prior belief with weight, not a fallback: evidence refines
+ * them as `prior_strength` (default `matching.priorStrength`) pseudo-trials.
+ *
  * This file is also the **spend whitelist**: an entry with `scores` (or a
  * score override in overrides.yaml) is what makes a model rated, and only
  * rated models enter a pool whose spec does not set `allowUnrated`. A
@@ -33,6 +36,12 @@ export interface ModelEntry {
 	 * veto can remove modalities, never grant one the catalog omits.
 	 */
 	require?: string[];
+	/**
+	 * How many pseudo-trials this model's scores are worth against evidence
+	 * (overrides `matching.priorStrength` for this model). Low moves fast
+	 * (a new arrival), high holds steady (a considered frontier prior).
+	 */
+	priorStrength?: number;
 }
 
 export function loadModels(cwd: string, warnings: DiscoveryWarning[]): Map<string, ModelEntry> {
@@ -86,6 +95,15 @@ function collectFile(filePath: string, models: Map<string, ModelEntry>, warnings
 
 		if (typeof obj.cost === "number" && Number.isFinite(obj.cost)) {
 			entry.cost = Math.max(0, Math.min(1, obj.cost));
+		}
+
+		if (obj.prior_strength !== undefined) {
+			const k = obj.prior_strength;
+			if (typeof k !== "number" || !Number.isFinite(k) || k < 1 || k > 100) {
+				warnings.push({ file: filePath, message: `model "${id}": prior_strength must be a number in [1, 100] — using the matching default` });
+			} else {
+				entry.priorStrength = k;
+			}
 		}
 
 		const require = readRequire(obj.require, filePath, id, warnings);

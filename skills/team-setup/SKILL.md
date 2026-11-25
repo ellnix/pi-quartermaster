@@ -86,7 +86,12 @@ The user's answers, not defaults, decide the team.
    prices. Scores are priors — set them from what the user knows, mention
    `scripts/refresh-scores.cjs` for cost suggestions, and note that
    ratings gathered by the quartermaster refine them over time. This file
-   is also the **spend whitelist**: a model is rated for non-scout specs
+   Scores are a **prior belief with weight**, not a fallback: ratings
+   refine them as `k` pseudo-trials of your belief (`matching.priorStrength`
+   in `authority.jsonc`, default 6), so one rating moves a score without
+   overturning it. A model that should move fast (a new arrival) can set
+   `prior_strength: 2`; one you hold steady (a considered frontier
+   prior), `prior_strength: 12`. This file is also the **spend whitelist**: a model is rated for non-scout specs
    only when it has `scores` here (or a score override), so every model
    the user is willing to pay for needs at least a rough score. A
    `cost`-only entry is price knowledge with no quality judgement and
@@ -104,7 +109,7 @@ The user's answers, not defaults, decide the team.
    an error.
 6. **Optionally write `team/authority.jsonc`** — which tool categories
    the quartermaster may approve alone versus which always escalate, plus
-   the optional `matching` section (`costLambda`, default 0.15) and
+   the optional `matching` section (`costLambda`, default 0.15; `priorStrength`, default 6) and
    `wake` section (`reports` / `asks` as `"immediate"` or `"off"`,
    `debounceMs`).
    The defaults are conservative; only loosen them on the user's

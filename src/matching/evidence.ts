@@ -3,6 +3,12 @@
  *
  * The statistics, in plain language:
  *
+ * - Anchoring: the Beta(1,1) in the next paragraphs is the story for a
+ *   dimension the user never scored. When they did score it (models.yaml
+ *   or an override), that score is the prior: k pseudo-trials of belief
+ *   (`matching.priorStrength`, or `prior_strength` per model), so one
+ *   rating moves the estimate but cannot invert a considered prior, and
+ *   its influence fades as real evidence accrues. See `Prior`.
  * - Each (model, dimension) pair keeps two counters, a and b. Think of
  *   a as "accumulated quality" and b as "accumulated shortfall": a
  *   rating of 0.7 adds 0.7 to a and 0.3 to b; a rating of 0 adds 1 to b.
@@ -84,19 +90,49 @@ export function saveEvidence(store: EvidenceStore): void {
 	fs.renameSync(tmp, EVIDENCE_FILE());
 }
 
+/**
+ * The user's own score for a dimension, carried as pseudo-trials: `score`
+ * is what they believe, `strength` (k) is how many trials that belief is
+ * worth. Evidence refines it; it never replaces it.
+ */
+export interface Prior {
+	score: number;
+	strength: number;
+}
+
+/**
+ * The effective Beta for a stored count pair. Stored counts always carry the
+ * legacy Beta(1,1) baseline (two pseudo-trials of "unknown"), so observed
+ * mass is `counts - (1, 1)`. With a prior, the baseline is swapped for the
+ * user's belief: a = observed_a + score*k, b = observed_b + (1-score)*k.
+ * That is also the migration for evidence recorded before priors anchored
+ * anything, done at read time: no stored data changes, and editing a score
+ * or k takes effect on the next draw. Without a prior (a dimension the user
+ * never scored) the baseline stays, exactly as before.
+ */
+function effective(counts: BetaCounts, prior?: Prior): BetaCounts {
+	if (!prior) return counts;
+	return {
+		a: counts.a - 1 + prior.score * prior.strength,
+		b: counts.b - 1 + (1 - prior.score) * prior.strength,
+	};
+}
+
 /** Posterior mean of a model's score on a dimension, or undefined. */
-export function evidenceMean(store: EvidenceStore, model: string, dimension: string): number | undefined {
-	const counts = store.get(model)?.get(dimension);
-	if (!counts) return undefined;
+export function evidenceMean(store: EvidenceStore, model: string, dimension: string, prior?: Prior): number | undefined {
+	const stored = store.get(model)?.get(dimension);
+	if (!stored) return undefined;
+	const counts = effective(stored, prior);
 	const total = counts.a + counts.b;
 	if (total <= 0) return undefined;
 	return counts.a / total;
 }
 
 /** Thompson sample of a model's score on a dimension, or undefined. */
-export function evidenceSample(store: EvidenceStore, model: string, dimension: string): number | undefined {
-	const counts = store.get(model)?.get(dimension);
-	if (!counts) return undefined;
+export function evidenceSample(store: EvidenceStore, model: string, dimension: string, prior?: Prior): number | undefined {
+	const stored = store.get(model)?.get(dimension);
+	if (!stored) return undefined;
+	const counts = effective(stored, prior);
 	return sampleBeta(counts.a, counts.b);
 }
 

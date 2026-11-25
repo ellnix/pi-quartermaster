@@ -27,7 +27,7 @@
  */
 
 import type { ModelEntry, QuartermasterConfig, SpecDef } from "../config/index.ts";
-import { evidenceMean, evidenceSample, type EvidenceStore } from "./evidence.ts";
+import { evidenceMean, evidenceSample, type EvidenceStore, type Prior } from "./evidence.ts";
 import type { Overrides } from "./overrides.ts";
 
 /** What the matcher needs to know about a candidate. */
@@ -90,7 +90,7 @@ export function drawForSpec(
 			(logMax > logMin ? 1 - (Math.log(Math.max(0.01, candidate.catalogCostPerMtok)) - logMin) / (logMax - logMin) : 1);
 
 		const rated = hasScoreSignal(entry, overrides, candidate.modelId);
-		const dims = scoreDimensions(candidate.modelId, entry, overrides, evidence);
+		const dims = scoreDimensions(candidate.modelId, entry, overrides, evidence, config.authority.matching.priorStrength);
 		// Cost's total influence is the weights' cost term plus this fixed
 		// penalty: additive, so it cannot skew models of equal cost against each
 		// other and it still bites at temperature 0, where a multiplicative
@@ -268,14 +268,38 @@ function deterministicScore(
 }
 
 /**
- * Effective score per dimension: overrides beat models.yaml, which beats
- * a Thompson sample of the evidence posterior. Missing dimensions score 0.
+ * The user's score for a dimension as a prior: an override beats models.yaml.
+ * Absent when the user never scored it, in which case evidence stands alone
+ * on the uninformative Beta(1,1).
+ */
+function priorFor(
+	modelId: string,
+	entry: ModelEntry | undefined,
+	overrides: Overrides,
+	dimension: string,
+	defaultStrength: number,
+): Prior | undefined {
+	let score = entry?.scores?.[dimension];
+	for (const o of overrides.scores.get(modelId) ?? []) {
+		if (o.dimension === dimension) score = o.value;
+	}
+	if (score === undefined) return undefined;
+	return { score, strength: entry?.priorStrength ?? defaultStrength };
+}
+
+/**
+ * Effective score per dimension: a Thompson sample of the evidence
+ * posterior when evidence exists, anchored to the user's score (override,
+ * then models.yaml) as a k-pseudo-trial prior, so evidence refines the
+ * score instead of replacing it; otherwise the score itself. Missing
+ * dimensions score 0.
  */
 function scoreDimensions(
 	modelId: string,
 	entry: ModelEntry | undefined,
 	overrides: Overrides,
 	evidence: EvidenceStore,
+	priorStrength: number,
 ): Map<string, number> {
 	const dims = new Map<string, number>();
 	for (const [dim, value] of Object.entries(entry?.scores ?? {})) {
@@ -285,7 +309,7 @@ function scoreDimensions(
 		dims.set(o.dimension, o.value);
 	}
 	for (const [dim] of dims) {
-		const sample = evidenceSample(evidence, modelId, dim);
+		const sample = evidenceSample(evidence, modelId, dim, priorFor(modelId, entry, overrides, dim, priorStrength));
 		if (sample !== undefined) dims.set(dim, sample);
 	}
 	return dims;

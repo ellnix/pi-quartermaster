@@ -44,6 +44,13 @@ export interface MatchingPolicy {
 	 * the default.
 	 */
 	costLambda: number;
+	/**
+	 * Pseudo-trials a user-set score is worth against evidence: the beta
+	 * prior is Beta(score*k, (1-score)*k). 1 reproduces the pre-anchoring
+	 * behaviour (the score is forgotten after one trial); higher holds
+	 * priors longer. Per-model `prior_strength` in models.yaml overrides it.
+	 */
+	priorStrength: number;
 }
 
 export const DEFAULT_MATCHING: MatchingPolicy = {
@@ -51,6 +58,9 @@ export const DEFAULT_MATCHING: MatchingPolicy = {
 	// by at most lambda, so equal-cost models keep their exact relative odds
 	// and the cheap side of a close call wins a little more often.
 	costLambda: 0.15,
+	// One rating moves a prior meaningfully but cannot invert a considered
+	// one; the prior fades as real evidence accrues.
+	priorStrength: 6,
 };
 
 /**
@@ -208,7 +218,18 @@ function matchingOf(
 			costLambda = obj.costLambda;
 		}
 	}
-	return { costLambda };
+	let priorStrength = DEFAULT_MATCHING.priorStrength;
+	if (obj.priorStrength !== undefined) {
+		if (typeof obj.priorStrength !== "number" || !Number.isFinite(obj.priorStrength) || obj.priorStrength < 1 || obj.priorStrength > 100) {
+			warnings.push({
+				file: filePath,
+				message: `matching.priorStrength must be a number in [1, 100] — using ${DEFAULT_MATCHING.priorStrength}`,
+			});
+		} else {
+			priorStrength = obj.priorStrength;
+		}
+	}
+	return { costLambda, priorStrength };
 }
 
 function patternsOf(value: unknown): string[] | null {

@@ -61,9 +61,10 @@ The user's answers, not defaults, decide the team.
    Rules: `tools` is the pre-approved surface — grant `edit` and `write`
    only to builders; absence means read-only defaults. Every agent needs
    a spec (inline in frontmatter — weights, temperature, filters) or a
-   direct `model` pin. There is no specs file: reusable specs live in
-   agent definitions, and the quartermaster builds overrides on the fly
-   at convene. Weights are 0-1. `filters.minScores: {dimension: 0-1}` is
+   direct `model` pin; a member's `model` at convene or `add_member` can
+   override that pin for a single deployment. There is no specs file:
+   reusable specs live in agent definitions, and the quartermaster builds
+   overrides on the fly at convene. Weights are 0-1. `filters.minScores: {dimension: 0-1}` is
    a **requirement**: candidates below the bar are excluded before the
    draw (it reads overrides, then models.yaml, then the evidence mean),
    so write frontier stances as a score floor rather than as a quality

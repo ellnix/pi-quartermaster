@@ -30,6 +30,7 @@ import {
 	type Ack,
 	type ConveneInput,
 	type MessageInput,
+	type MemberStatus,
 	type PendingAsk,
 	type QuartermasterEngine,
 	type ReadChannelInput,
@@ -83,7 +84,7 @@ function teamText(status: TeamStatus): { content: { type: "text"; text: string }
 				: m.addedAt
 					? ` added ${stamp(m.addedAt)}`
 					: "";
-			lines.push(`- ${m.name}${m.definition ? ` (${m.definition})` : ""} [${m.state === "unstarted" ? "idle (not started)" : m.state}${marker}] ${m.model ? `on ${m.model}` : "(no model drawn)"} — ${m.description}${m.note ? ` (${m.note})` : ""}`);
+			lines.push(`- ${m.name}${m.definition ? ` (${m.definition})` : ""} [${m.state === "unstarted" ? "idle (not started)" : m.state}${marker}] ${modelLabel(m)} — ${m.description}${m.note ? ` (${m.note})` : ""}`);
 			if (m.workspace) {
 				lines.push(`    ${m.workspace.mode === "attach" ? `attached to ${m.workspace.attachedTo}'s worktree` : `worktree on ${m.workspace.branch}`} at ${m.workspace.path}`);
 			}
@@ -102,6 +103,13 @@ function teamText(status: TeamStatus): { content: { type: "text"; text: string }
 		lines.push(`warning: ${w}`);
 	}
 	return text(lines.join("\n"));
+}
+
+function modelLabel(m: MemberStatus): string {
+	if (!m.model) return "(no model drawn)";
+	if (m.modelSource === "override") return `on ${m.model} (explicit)`;
+	if (m.modelSource === "pin") return `on ${m.model} (pinned)`;
+	return `on ${m.model}`;
 }
 
 function asksText(asks: PendingAsk[]): { content: { type: "text"; text: string }[]; details: unknown } {
@@ -138,6 +146,17 @@ const WORKSPACE_FIELDS = {
 		}),
 	),
 	attachTo: Type.Optional(Type.String({ description: "For worktree: attach, the member whose worktree to join. Convene the owner earlier in the list." })),
+};
+
+const MODEL_FIELD = {
+	model: Type.Optional(
+		Type.String({
+			description:
+				"A physical model id (\"provider/model-id\") to pin for this member: it skips the spec draw and overrides the agent file's own `model`. " +
+				"Use it when a draw would be wrong for this member, or to try a specific model. The spec's filters do not apply, and an id that is not in the " +
+				"catalog or has no configured auth fails that member instead of falling back to a draw.",
+		}),
+	),
 };
 
 const SPEC_OVERRIDE = Type.Object(
@@ -221,7 +240,7 @@ export default function quartermaster(pi: ExtensionAPI): void {
 		description:
 			"Convene a team of persistent sub-agents. Each member runs as a child session " +
 			"with a model drawn once from its spec (temperature-bounded, filtered by auth, " +
-			"capability, and cost). Agents carry their reusable specs; an override here is " +
+			"capability, and cost), or pin one explicitly by naming it on the member. Agents carry their reusable specs; an override here is " +
 			"built on the fly, not named. Members are persistent: the task is the initial " +
 			"instruction (omit it, or pass an empty string, to convene a member armed: " +
 			"drawn and wired but idle and not started, costing nothing until its first " +
@@ -238,6 +257,7 @@ export default function quartermaster(pi: ExtensionAPI): void {
 				Type.Object({
 					agent: Type.String({ description: "Agent definition name (from the agent dir: team/agents/, or the project .pi/agents/)." }),
 					spec: Type.Optional(SPEC_OVERRIDE),
+					...MODEL_FIELD,
 					...NAME_FIELD,
 					...WORKSPACE_FIELDS,
 					task: Type.Optional(Type.String({ description: "The initial task for this member. Self-contained enough to start from. Omit or \"\" to convene idle (not started); the first message_member starts it. Whitespace-only is an error." })),
@@ -295,8 +315,10 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			"Rate a member's outcome at return-time, when your judgment is freshest. " +
 			"outcome is 0 to 1 — a bad review means the member's model was bad at what " +
 			"the member was convened to do. You never track models or dimensions: the " +
-			"member's spec says what its model was drawn for, and the evidence updates " +
-			"the drawn model on those dimensions. One bad day moves a model a little; a " +
+			"member's spec says what its model was for — drawn, pinned, or named at " +
+			"convene — and the evidence updates that model on the spec's dimensions. " +
+			"A member that never resolved a usable model, or whose agent names no spec " +
+			"dimensions, is refused rather than rated into nothing. One bad day moves a model a little; a " +
 			"pattern moves it a lot; down-scored models still draw occasionally — that " +
 			"is the recovery path.",
 		promptGuidelines: ["Rate each member at return-time; rate every member before dissolving."],
@@ -388,8 +410,8 @@ export default function quartermaster(pi: ExtensionAPI): void {
 		name: "add_member",
 		label: "Add member",
 		description:
-			"Add a member to the live team: one draw now under the agent's spec, " +
-			"the same gates as convening. A failed draw leaves the team unchanged. The task may be " +
+			"Add a member to the live team: one draw now under the agent's spec — " +
+			"or the model you name — with the same gates as convening. A failed draw leaves the team unchanged. The task may be " +
 			"omitted to add the member armed (idle, not started; its first message starts it). " +
 			"mailboxes extends the channel graph; existing wiring is untouched, and members already " +
 			"running hear of new channels at their next message. Logged in the record's composition history.",
@@ -397,6 +419,7 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			agent: Type.String({ description: "Agent definition name." }),
 			...NAME_FIELD,
 			spec: Type.Optional(SPEC_OVERRIDE),
+			...MODEL_FIELD,
 			...WORKSPACE_FIELDS,
 			task: Type.Optional(Type.String({ description: "Initial task. Omit or \"\" to add idle. Whitespace-only is an error." })),
 			mailboxes: Type.Optional(

@@ -1,5 +1,40 @@
 # Changelog
 
+## [Unreleased]
+### Added
+- A convene member or `add_member` can name an explicit `model` (a
+  physical `provider/model-id`). It pins that model for the deployment:
+  the spec draw is skipped, and it wins over the agent file's own
+  `model` pin. Precedence is explicit choice, then agent pin, then draw.
+  The id is checked against the catalog and configured auth, and a bad
+  one fails that member instead of quietly falling back to a draw.
+  `team_list` marks the member `(explicit)` and the composition record
+  keeps how each model was resolved. An empty `model` is refused instead
+  of quietly falling through to the pin or the draw, and a chosen model
+  that bypasses a spec's filters is flagged at convene — a capability gap
+  it actually has ("lacks image input that the spec requires") and the
+  score or cost floors that were not applied. The choice still wins, but
+  you hear what it skipped.
+
+### Fixed
+- A failed `add_member` lost the reason along with the member: the team
+  was left unchanged, but the note vanished with the dropped crewman.
+  The rejection reason now rides on the result's warnings, so a spec-less
+  agent or an unusable model id says why it was not added.
+- `rate_member` on a member whose agent names no spec reported success
+  while writing nothing: there were no dimensions to update. It now
+  refuses and says why, instead of reporting evidence that never landed.
+  A bare model pin, or an explicit model without a spec, has nowhere to
+  be rated.
+- `rate_member` also refused a member that never resolved a usable model
+  (a failed convene, a bad explicit model): rating it wrote evidence
+  against a model id that may not exist. The rating resolver carries the
+  member's state, and the engine refuses with the member's own note.
+- A member that failed during convene no longer counts as an active
+  channel endpoint. A mailbox wired to or from it does not open, and the
+  convene warnings say the channel will not open instead of leaving the
+  rest of the team pointed at an endpoint that can never receive.
+
 ## [0.3.0]
 ### Added
 - One agent definition can be launched several times under different names:

@@ -33,6 +33,28 @@ export interface SpecOverrideInput {
 	};
 }
 
+/**
+ * Explicit model selection, shared by convene members and add_member.
+ *
+ * An explicit choice is still checked against the catalog and auth — a
+ * typo fails that member with an error, and never falls back to a draw
+ * the user did not ask for.
+ */
+export interface ModelInput {
+	/**
+	 * A physical model id ("provider/model-id") pinning this member for
+	 * this deployment: it skips the spec draw and wins over the agent
+	 * file's own `model` pin. Use it when a draw would be wrong for this
+	 * member, or to try a specific model. The spec's filters do not apply
+	 * — a choice made, not drawn — but `rate_member` still resolves to
+	 * this model and to the spec's dimensions.
+	 */
+	model?: string;
+}
+
+/** Where a member's model came from; see ModelInput and AgentDef.model. */
+export type ModelSource = "override" | "pin" | "draw";
+
 /** Where a member works; see AgentDef.worktree. */
 export type WorktreeModeInput = "shared" | "per-member" | "attach";
 
@@ -51,7 +73,7 @@ export interface WorkspaceInput {
 	attachTo?: string;
 }
 
-export interface ConveneMemberInput extends WorkspaceInput {
+export interface ConveneMemberInput extends WorkspaceInput, ModelInput {
 	/** Agent definition name (the `name` in an agent .md file). */
 	agent: string;
 	/**
@@ -98,7 +120,7 @@ export interface ConveneMailboxInput {
 	to: string;
 }
 
-export interface AddMemberInput extends WorkspaceInput {
+export interface AddMemberInput extends WorkspaceInput, ModelInput {
 	/** Agent definition name. */
 	agent: string;
 	/** The name this crewman goes by in the team; see ConveneMemberInput.name. */
@@ -155,6 +177,12 @@ export interface MemberStatus {
 	description: string;
 	spec?: string;
 	model?: string;
+	/**
+	 * How the member got its model: `override` (an explicit `model` at
+	 * convene or add_member), `pin` (the agent file's own `model`), or
+	 * `draw` (the spec's matcher). Absent when no model resolved.
+	 */
+	modelSource?: ModelSource;
 	/** Where the member works, when it is isolated or attached; absent = the user's tree. */
 	workspace?: { mode: "per-member" | "attach"; path: string; branch?: string; attachedTo?: string };
 	/** Set on members added mid-flight (add_member). */
@@ -210,7 +238,7 @@ export interface ReadChannelResult {
 }
 
 export interface RateInput {
-	/** Team member name; the spec it was convened under says what its model was drawn for. */
+	/** Team member name; the spec it was convened under says what its model was for, however that model was resolved. */
 	member: string;
 	/** Outcome quality, 0 to 1. */
 	outcome: number;

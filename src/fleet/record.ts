@@ -13,6 +13,7 @@
 import * as fs from "node:fs";
 import { asksFile, channelFile, compositionFile, reportsFile } from "../config/paths.ts";
 import type { ReportEntry } from "./crewman.ts";
+import type { ModelSource } from "../engine.ts";
 
 export function ensureRecord(recordPath: string): void {
 	fs.mkdirSync(recordPath, { recursive: true });
@@ -102,6 +103,8 @@ export interface CompositionEntry {
 	/** The agent definition (file) behind the member. */
 	definition?: string;
 	model?: string;
+	/** How the model was resolved: an explicit choice, an agent pin, or the draw. */
+	modelSource?: ModelSource;
 	dimensions?: Array<{ dimension: string; weight: number }>;
 	/** "convene" or "add_member" for additions. */
 	via?: string;

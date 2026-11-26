@@ -177,8 +177,9 @@ export function createEngine(ctx: ExtensionToolContext): QuartermasterEngine {
 
 		rate: async (input: RateInput): Promise<Ack> => {
 			// Rating resolves by member: the member's spec says what its model
-			// was drawn for, so the evidence lands on the drawn model weighted
-			// by the spec's dimensions. The quartermaster never tracks models.
+			// was for — drawn, pinned, or named — so the evidence lands on that
+			// model weighted by the spec's dimensions. The quartermaster never
+			// tracks models.
 			const fleet = state.fleet;
 			if (!fleet?.convened) {
 				return {
@@ -189,6 +190,24 @@ export function createEngine(ctx: ExtensionToolContext): QuartermasterEngine {
 			const resolution = fleet.memberForRating(input.member);
 			if (!resolution) {
 				return { ok: false, message: `no member named "${input.member}" — see team_list` };
+			}
+			// A member that failed before a usable model was found never ran:
+			// rating it would write evidence against a model that may not exist.
+			if (resolution.state === "error" || !resolution.modelId) {
+				return {
+					ok: false,
+					message: `${input.member} was not rated: it never resolved a usable model${resolution.note ? ` (${resolution.note})` : ""}`,
+				};
+			}
+			// A member with no spec has no dimensions: its name set, an agent
+			// `model` pin, or an explicit model with no spec. Recording nothing
+			// is not evidence, so say so instead of reporting a rating that never
+			// landed.
+			if (resolution.dimensions.length === 0) {
+				return {
+					ok: false,
+					message: `${input.member} was not rated: its agent names no spec dimensions, so there is nothing to update ${resolution.modelId} on (a bare model pin or an explicit model without a spec cannot be rated)`,
+				};
 			}
 			const outcome = clamp01(input.outcome);
 			for (const { dimension, weight } of resolution.dimensions) {

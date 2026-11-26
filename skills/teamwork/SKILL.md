@@ -55,6 +55,10 @@ Standing orders for the quartermaster.
 2. Agents carry their reusable specs. Override a member's spec only when
    the task genuinely differs from its definition — build the override
    on the fly (weights, temperature, filters), don't invent named specs.
+   When the user names a model, pass it as that member's `model`: it is a
+   choice, not a draw — it skips the spec's filters and wins over the
+   agent file's pin, which is exactly what is wanted for an experiment,
+   and wrong when the spec exists to keep a member inside a pool.
 3. Declare the channel wiring up front: every mailbox with its
    endpoints. The wiring is the single authority for who talks to whom;
    creating a channel mid-flight is a recorded decision, not a

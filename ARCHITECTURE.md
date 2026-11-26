@@ -48,7 +48,10 @@ and tracking numbers on reports and messages.
    (auth, capability, cost ceiling), and temperature is per-spec.
 6. **One draw per session.** The model is drawn when a session is
    convened, never per message: a persistent child keeps its context and
-   its prompt cache warm, and "search again" stays cheap.
+   its prompt cache warm, and "search again" stays cheap. An explicit
+   `model` on a convene member or on `add_member` replaces the draw for
+   that deployment (and the agent file's pin); chaos is the default, not
+   a mandate.
 7. **No hidden live state.** Anything that happens mid-flight — a
    mailbox created on the fly, traffic, ratings — is persisted to the
    session record where it can be inspected. Coordination state that only
@@ -202,8 +205,8 @@ channel id, or a `from--to` pairing. The same template wired twice with
 identical endpoints fails convene.
 
 Membership is dynamic: `add_member` / `remove_member` append `added` /
-`removed` events to the record's `composition.jsonl`, carrying the drawn
-model and weighted dimensions so a removed member remains ratable. `open_mailbox` / `close_mailbox` change
+`removed` events to the record's `composition.jsonl`, carrying the resolved
+model (and how it was resolved) plus the weighted dimensions so a removed member remains ratable. `open_mailbox` / `close_mailbox` change
 channels the same way (`channel_opened` / `channel_closed` events); a
 closed channel refuses delivery both ways, keeps its log, and reopens
 under the same id. A
@@ -260,6 +263,15 @@ anthropic/claude-opus-4-8:
 - **Filter → draw:** candidates = authenticated ∩ capability ∩ cost
   ceiling ∩ score floor; P(model) = softmax(suitability / τ); draw once
   at convening.
+- **A named model is not drawn.** A convene member or `add_member` may
+  carry `model` — a physical `provider/model-id` — which pins that
+  member for the deployment, skipping the filters and the softmax. It
+  wins over the agent file's own `model` pin; precedence is explicit
+  choice → agent pin → draw. The id is still checked against the catalog
+  and configured auth, and a bad one fails that member rather than
+  falling back to a draw nobody asked for. Ratings still resolve to the
+  chosen model through the spec's dimensions, and the composition record
+  keeps how each model was resolved.
 - **`models.yaml` is the spend whitelist.** A model is rated — eligible
   for a pool whose spec does not set `allowUnrated` — only when the user
   gave it score signal: an entry with `scores`, or a score override. A
@@ -390,7 +402,7 @@ Quartermaster-facing (the interactive session):
 
 | Tool | Purpose |
 |---|---|
-| `convene` | form a team: draw a model per member (once), spawn persistent RPC children, define mailboxes |
+| `convene` | form a team: draw a model per member (once) or pin one per member, spawn persistent RPC children, define mailboxes |
 | `team list` | members, live status, their descriptions and recommended use |
 | `read-channel` / `digest` | inspect mailbox traffic and reports on demand; reports and asks also arrive as debounced wake digests |
 | `rate` | outcome-shaped rating → evidence store, at return-time |

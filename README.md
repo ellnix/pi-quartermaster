@@ -49,7 +49,7 @@ surface:
 
 | Tool | Purpose |
 |---|---|
-| `convene_team` | spawn members with drawn models; declare the channel wiring |
+| `convene_team` | spawn members with drawn models (or one pinned per member); declare the channel wiring |
 | `team_list` | with no team: the agents and mailbox templates you can convene; with one: members, states, workspaces, open channels, pending asks, unread reports |
 | `add_member` / `remove_member` | change a live team without re-drawing everyone; removed members stay in the record and stay ratable |
 | `open_mailbox` / `close_mailbox` | wire or shut a channel mid-flight; a closed channel keeps its log |
@@ -64,6 +64,13 @@ surface:
 Members that can write work in their own git worktree on their own
 branch, so nothing overwrites anything, including your tree
 (`.pi/team/worktrees.jsonc` declares what a fresh tree needs).
+
+Each member's model is drawn once from its spec, or pinned by its agent
+file. Naming `model` (a physical `provider/model-id`) on a convene member
+or on `add_member` overrides both for that deployment: the choice is
+checked against the catalog and configured auth instead of silently
+falling back to a draw, `team_list` marks it `(explicit)`, and the
+record keeps how every model was resolved.
 
 Members get `report`, `send`, and `request_permission` — their only
 channels. Reports carry tracking numbers (`r1, r2, ...`), messages too
@@ -80,6 +87,8 @@ task is not missed while you are away. The `wake` section of
 npm run check                  # tsc --noEmit (strict)
 pi -e .                        # load the package locally: extension + skills
 npx tsx scripts/smoke-config.ts [cwd]     # config discovery check
+npx tsx scripts/smoke-tools.ts            # tool surface check (explicit model field)
+npx tsx scripts/smoke-members.ts          # dynamic membership + model choice check
 npx tsx scripts/smoke-matcher.ts          # draw distribution check
 npx tsx scripts/smoke-wake.ts              # wake digest + debounce check
 node scripts/refresh-scores.cjs            # prior suggestions

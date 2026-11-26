@@ -83,6 +83,99 @@ fleet.ctx = { modelRegistry: { getAvailable: () => [], hasConfiguredAuth: () => 
 const before = [...fleet.members.keys()].join();
 const bad = await fleet.addMember({ agent: "nospec" });
 ok("failed draw: not added, team unchanged", !bad.ok && [...fleet.members.keys()].join() === before);
+ok("a failed add says why in its warnings", (bad.warnings ?? []).some((w: string) => w.includes("nospec") && w.includes("no spec")));
+
+// Explicit model choice: precedence, catalog checks, failure reporting.
+{
+	const registry = {
+		getAvailable: () => [],
+		hasConfiguredAuth: (m: any) => m.id !== "noauth",
+		find: (p: string, id: string) => (p === "p" && id !== "nope" ? { provider: "p", id } : undefined),
+	};
+	fleet.ctx = { modelRegistry: registry, cwd: process.cwd() };
+	config.agents.set("pinned", { ...def("pinned", spec), model: "p/agent-pin" });
+	config.agents.set("free", def("free", spec));
+	const probe = (agent: any, modelOverride?: string) => ({ name: agent.name, agent, spec: agent.spec, modelOverride });
+
+	const chosen = await fleet.resolveModel(probe(config.agents.get("pinned"), "p/ok"), []);
+	ok("an explicit model wins over the agent file's pin", chosen.ok && chosen.source === "override" && chosen.modelId === "p/ok");
+	const pinned = await fleet.resolveModel(probe(config.agents.get("pinned")), []);
+	ok("without one, the agent file's pin applies", pinned.ok && pinned.source === "pin" && pinned.modelId === "p/agent-pin");
+	ok("with neither, the spec draw still decides", !(await fleet.resolveModel(probe(config.agents.get("free")), [])).ok);
+
+	ok("a model id with no provider is called out", fleet.modelProblem("haiku").includes("provider/model-id"));
+	ok("an id missing from the catalog is called out", fleet.modelProblem("p/nope").includes("not in the model catalog"));
+	ok("a model without auth is called out", fleet.modelProblem("p/noauth").includes("no configured auth"));
+	ok("a usable id passes", fleet.modelProblem("p/ok") === undefined);
+
+	// add_member forwards the choice; a bad one fails without a fallback draw.
+	const realSpawnBound = fleet.spawnMember;
+	const forwarded: any[] = [];
+	fleet.spawnMember = async (agent: any, _s: any, _w: any, _d: any, _f: any, model?: string) => {
+		forwarded.push([agent.name, model]);
+		const member = { name: agent.name, agent, spec: agent.spec, modelId: model, modelSource: model ? "override" : "draw", session: stubSession(agent.name), state: "unstarted", pendingDelivery: [], notices: [] };
+		fleet.members.set(agent.name, member);
+		return member;
+	};
+	const picked = await fleet.addMember({ agent: "free", model: "p/ok" });
+	ok("add_member forwards the explicit model", picked.ok && forwarded.at(-1)?.[1] === "p/ok" && picked.message.includes("p/ok"));
+	ok("team_list shows the model came from the choice", fleet.status().members.find((m: any) => m.name === "free").modelSource === "override");
+	const emptyAdd = await fleet.addMember({ agent: "free", model: "  " });
+	ok("an empty model is refused, not read as no choice", !emptyAdd.ok && emptyAdd.message.includes("model is empty"));
+	let conveneThrew = "";
+	try {
+		await new Fleet({} as any, config, {} as any, {} as any).convene({ members: [{ agent: "free", model: "" }] });
+	} catch (err) {
+		conveneThrew = String(err);
+	}
+	ok("convene refuses an empty model before drawing anything", conveneThrew.includes("model is empty"));
+	// A model without a spec runs, but its rating has nowhere to land.
+	config.agents.set("bare", { ...def("bare"), model: "p/ok" });
+	fleet.members.set("bare-probe", { name: "bare-probe", agent: config.agents.get("bare"), spec: undefined, modelId: "p/ok", state: "idle", pendingDelivery: [], notices: [] });
+	ok("a spec-less member has no rating dimensions, so rate_member refuses", fleet.memberForRating("bare-probe")?.dimensions.length === 0);
+	fleet.members.delete("bare-probe");
+	fleet.spawnMember = realSpawnBound;
+	const badModel = await fleet.addMember({ agent: "pinned", model: "p/nope" });
+	ok("an unusable explicit model fails the add, no fallback", !badModel.ok && !fleet.members.has("pinned"));
+	ok("and the failure names the model and the reason", (badModel.warnings ?? []).some((w: string) => w.includes("p/nope") && w.includes("not in the model catalog")));
+
+	// convene hands each member's choice down the same path.
+	const issued: any[] = [];
+	const conv: any = new Fleet({} as any, config, {} as any, {} as any);
+	conv.spawnMember = async (agent: any, _s: any, _w: any, _d: any, _f: any, model?: string) => {
+		issued.push([agent.name, model]);
+		const member = { name: agent.name, agent, spec: agent.spec, modelId: model ?? "p/m", session: stubSession(agent.name), state: "unstarted", pendingDelivery: [], notices: [] };
+		conv.members.set(agent.name, member);
+		return member;
+	};
+	await conv.convene({ members: [{ agent: "free", name: "conv-free", model: "p/ok", task: "go" }] });
+	ok("convene forwards the explicit model", issued[0]?.[1] === "p/ok");
+	const convRecord = conv.recordPath;
+	await conv.dissolve();
+	if (convRecord) fs.rmSync(convRecord, { recursive: true, force: true });
+
+	// A member that failed its model check is not a live channel endpoint.
+	const mixed: any = new Fleet({} as any, config, {} as any, {} as any);
+	mixed.ctx = { modelRegistry: registry, cwd: process.cwd() };
+	const realSpawnMixed = Fleet.prototype["spawnMember" as keyof Fleet] as any;
+	mixed.spawnMember = async (agent: any, spec: any, ws: any, warnings: string[], drop: boolean, model?: string) => {
+		if (model === "p/nope") return realSpawnMixed.call(mixed, agent, spec, ws, warnings, drop, model);
+		const member = { name: agent.name, agent, spec: agent.spec, modelId: model ?? "p/ok", session: stubSession(agent.name), state: "unstarted", pendingDelivery: [], notices: [] };
+		mixed.members.set(agent.name, member);
+		return member;
+	};
+	const mixedStatus = await mixed.convene({
+		members: [{ agent: "free", name: "good", task: "" }, { agent: "free", name: "bad", model: "p/nope" }],
+		mailboxes: [{ name: "ask", from: "bad", to: "good" }],
+	});
+	ok("an unusable model leaves the member in error", mixed.members.get("bad")?.state === "error");
+	ok("a channel wired to a failed member does not open", !mixed.channels.has("ask"));
+	ok("convene says the channel will not open", mixedStatus.warnings.some((w: string) => w.includes("not an active member")));
+	ok("the rating resolver carries the failed state", mixed.memberForRating("bad")?.state === "error");
+	const mixedRecord = mixed.recordPath;
+	await mixed.dissolve();
+	if (mixedRecord) fs.rmSync(mixedRecord, { recursive: true, force: true });
+}
 
 // Removal refuses while working, and reports why.
 fleet.members.get("builder").state = "working";

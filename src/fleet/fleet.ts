@@ -32,6 +32,7 @@ import type {
 	ConveneInput,
 	ConveneMailboxInput,
 	MemberStatus,
+	ModelSource,
 	RemoveMemberInput,
 	SpecOverrideInput,
 	TeamStatus,
@@ -56,6 +57,9 @@ interface FleetMember {
 	/** The resolved spec this member was convened under. */
 	spec?: SpecDef;
 	modelId?: string;
+	/** An explicit choice for this deployment; wins over the agent file's pin. */
+	modelOverride?: string;
+	modelSource?: ModelSource;
 	session?: AgentSession;
 	state: MemberStatus["state"];
 	note?: string;
@@ -97,6 +101,13 @@ interface OpenChannel {
 
 /** Tools a member gets when its agent file grants none: read-only. */
 const DEFAULT_TOOLS = ["read", "ls", "find", "grep"];
+
+/** How a model's provenance is named in an error: how it was resolved. */
+const MODEL_SOURCE_LABEL: Record<ModelSource, string> = {
+	override: "explicit model",
+	pin: "agent model pin",
+	draw: "drawn model",
+};
 
 export class Fleet {
 	private members = new Map<string, FleetMember>();
@@ -142,10 +153,17 @@ export class Fleet {
 
 		// An accidental whitespace-only task must fail, not silently start a
 		// member with nothing to do. Empty or omitted means "convene armed".
+		// An empty model is the same kind of mistake: it would silently fall
+		// through to the pin or the draw, which is not what naming one means.
 		for (const request of input.members) {
 			if (request.task !== undefined && request.task !== "" && request.task.trim() === "") {
 				throw new Error(
 					`member "${request.agent}": task is whitespace-only — give a real task, or omit it / pass "" to convene the member idle`,
+				);
+			}
+			if (request.model !== undefined && request.model.trim() === "") {
+				throw new Error(
+					`member "${request.agent}": model is empty — name a physical model id (provider/model-id), or omit it to use the agent's pin or the spec's draw`,
 				);
 			}
 		}
@@ -176,7 +194,7 @@ export class Fleet {
 				warnings.push(`member "${agent.name}" listed twice — second occurrence skipped (give it a distinct \`name\` to launch the same agent again)`);
 				continue;
 			}
-			const member = await this.spawnMember(agent, request.spec, request, warnings);
+			const member = await this.spawnMember(agent, request.spec, request, warnings, false, request.model);
 			if (member) starts.push({ member, task: request.task?.trim() ?? "" });
 		}
 
@@ -238,10 +256,10 @@ export class Fleet {
 		return batch.filter((w) => w.name === template).length > 1 || [...this.channels.values()].some((c) => c.name === template);
 	}
 
-	/** An active member: present and not removed. */
+	/** An active member: present, and neither removed nor failed. */
 	private active(name: string): FleetMember | undefined {
 		const member = this.members.get(name);
-		return member && member.state !== "removed" ? member : undefined;
+		return member && member.state !== "removed" && member.state !== "error" ? member : undefined;
 	}
 
 	private logAdded(member: FleetMember, via: string): void {
@@ -252,6 +270,7 @@ export class Fleet {
 			member: member.name,
 			definition: member.agent.definition,
 			model: member.modelId,
+			modelSource: member.modelSource,
 			dimensions: rating?.dimensions,
 			via,
 			worktree: member.placement && member.placement.mode !== "shared"
@@ -269,10 +288,10 @@ export class Fleet {
 		}
 		const warningsFor: string[] = [];
 		if (!this.active(wiring.from)) {
-			warningsFor.push(`channel "${wiring.name}" wired from "${wiring.from}" who is not a member — channel will not open`);
+			warningsFor.push(`channel "${wiring.name}" wired from "${wiring.from}" who is not an active member — channel will not open`);
 		}
 		if (!this.active(wiring.to)) {
-			warningsFor.push(`channel "${wiring.name}" wired to "${wiring.to}" who is not a member — channel will not open`);
+			warningsFor.push(`channel "${wiring.name}" wired to "${wiring.to}" who is not an active member — channel will not open`);
 		}
 		if (warningsFor.length > 0) return warningsFor;
 
@@ -296,6 +315,7 @@ export class Fleet {
 		workspace: WorkspaceInput,
 		warnings: string[],
 		dropOnFailure = false,
+		requestedModel?: string,
 	): Promise<FleetMember | undefined> {
 		let result: FleetMember | undefined;
 		// The child marker is process-global, so creations serialize.
@@ -311,10 +331,13 @@ export class Fleet {
 				spec = validateSpec(specOverride, `convene member ${agent.name}`, specWarnings) ?? undefined;
 				for (const w of specWarnings) warnings.push(`${w.file}: ${w.message}`);
 			}
+			// Trimmed once, here: every later reader sees one normalized value,
+			// and an empty string means "no choice", not a pin to "".
 			const member: FleetMember = {
 				name: agent.name,
 				agent,
 				spec,
+				modelOverride: requestedModel?.trim() || undefined,
 				state: "convening",
 				pendingDelivery: [],
 				notices: [],
@@ -324,8 +347,13 @@ export class Fleet {
 			const fail = (note: string): void => {
 				member.state = "error";
 				member.note = note;
-				// A mid-flight add must leave the team unchanged on failure.
-				if (dropOnFailure) this.members.delete(member.name);
+				// A mid-flight add must leave the team unchanged on failure. The
+				// member vanishes, so its note rides on the warnings instead: the
+				// reason a model or spec was rejected must not vanish with it.
+				if (dropOnFailure) {
+					this.members.delete(member.name);
+					warnings.push(`${member.name} not added: ${note}`);
+				}
 			};
 
 			const draw = await this.resolveModel(member, warnings);
@@ -334,13 +362,42 @@ export class Fleet {
 				return;
 			}
 			member.modelId = draw.modelId;
+			member.modelSource = draw.source;
+
+			// One catalog check for all three sources: an override that does not
+			// exist is a typo to report, not a draw to retry.
+			const problem = this.modelProblem(draw.modelId);
+			if (problem) {
+				fail(`${MODEL_SOURCE_LABEL[draw.source]} ${problem}`);
+				return;
+			}
 
 			const slash = draw.modelId.indexOf("/");
-			const model =
-				this.ctx.modelRegistry.find(draw.modelId.slice(0, slash), draw.modelId.slice(slash + 1)) ?? undefined;
-			if (!model || !this.ctx.modelRegistry.hasConfiguredAuth(model)) {
-				fail(`drawn model ${draw.modelId} is not usable in this session`);
-				return;
+			// modelProblem has just proved the catalog holds this id.
+			const model = this.ctx.modelRegistry.find(draw.modelId.slice(0, slash), draw.modelId.slice(slash + 1))!;
+			// A chosen or pinned model bypasses the spec's filters by design.
+			// Say which requirements were not applied, and name a capability
+			// gap concretely: a spec's `require` usually exists for a reason.
+			if (draw.source !== "draw" && spec?.filters) {
+				const notes: string[] = [];
+				const filters = spec.filters;
+				if (filters.require?.length) {
+					// The same narrowing the matcher applies: models.yaml `require`
+					// is a veto over the catalog's claim, never a grant.
+					const listed = this.config.models.get(draw.modelId)?.require;
+					const input = (model.input as string[]).filter((m) => !listed || listed.includes(m));
+					const lacking = filters.require.filter((m) => !input.includes(m));
+					if (lacking.length > 0) notes.push(`lacks ${lacking.join("+")} input that the spec requires`);
+				}
+				if (filters.minScores && Object.keys(filters.minScores).length > 0) {
+					notes.push(`the spec's score floors (${Object.keys(filters.minScores).join(", ")}) were not applied`);
+				}
+				if (filters.minCostScore !== undefined) {
+					notes.push(`the spec's cost floor (${filters.minCostScore}) was not applied`);
+				}
+				if (notes.length > 0) {
+					warnings.push(`${agent.name}: ${MODEL_SOURCE_LABEL[draw.source]} ${draw.modelId} ${notes.join("; ")} — the choice wins`);
+				}
 			}
 
 			// Placement comes after the draw so a failed draw leaves no tree
@@ -698,6 +755,12 @@ export class Fleet {
 		if (input.task !== undefined && input.task !== "" && input.task.trim() === "") {
 			return { ok: false, message: `task is whitespace-only — give a real task, or omit it / pass "" to add ${input.agent} idle` };
 		}
+		if (input.model !== undefined && input.model.trim() === "") {
+			return {
+				ok: false,
+				message: `model is empty — name a physical model id (provider/model-id), or omit it to use the agent's pin or the spec's draw`,
+			};
+		}
 		const resolved = this.resolveAgent(input.agent, input.name);
 		if (!resolved.ok) return { ok: false, message: resolved.error };
 		const agent = resolved.agent;
@@ -715,7 +778,7 @@ export class Fleet {
 		if (duplicate) return { ok: false, message: duplicate };
 
 		const warnings: string[] = [];
-		const member = await this.spawnMember(agent, input.spec, input, warnings, true);
+		const member = await this.spawnMember(agent, input.spec, input, warnings, true, input.model);
 		if (!member) {
 			return { ok: false, message: `${agent.name} was not added; the team is unchanged`, warnings };
 		}
@@ -883,6 +946,7 @@ export class Fleet {
 			member: member.name,
 			definition: member.agent.definition,
 			model: member.modelId,
+			modelSource: member.modelSource,
 			dimensions: rating?.dimensions,
 			reason: input.reason,
 			forced: input.force ? true : undefined,
@@ -896,13 +960,19 @@ export class Fleet {
 	}
 
 	/**
-	 * Resolve a member for rating: its drawn model and the dimensions its
-	 * spec weights (excluding cost, which is a fact, not an outcome). The
+	 * Resolve a member for rating: the model it resolved to, the dimensions
+	 * its spec weights (excluding cost, which is a fact, not an outcome), and
+	 * its state — a member that failed never ran, so it cannot be rated. The
 	 * quartermaster rates members; the engine translates to evidence.
 	 */
-	memberForRating(memberName: string): { modelId: string; dimensions: Array<{ dimension: string; weight: number }> } | null {
+	memberForRating(memberName: string): {
+		modelId?: string;
+		state: MemberStatus["state"];
+		note?: string;
+		dimensions: Array<{ dimension: string; weight: number }>;
+	} | null {
 		const member = this.members.get(memberName);
-		if (!member?.modelId) return null;
+		if (!member) return null;
 		const spec = member.spec;
 		const dimensions: Array<{ dimension: string; weight: number }> = [];
 		if (spec) {
@@ -910,7 +980,7 @@ export class Fleet {
 				if (dimension !== "cost" && weight > 0) dimensions.push({ dimension, weight });
 			}
 		}
-		return { modelId: member.modelId, dimensions };
+		return { modelId: member.modelId, state: member.state, note: member.note, dimensions };
 	}
 
 	/**
@@ -958,9 +1028,16 @@ export class Fleet {
 	private async resolveModel(
 		member: FleetMember,
 		warnings: string[],
-	): Promise<{ ok: true; modelId: string } | { ok: false; error: string }> {
+	): Promise<{ ok: true; modelId: string; source: ModelSource } | { ok: false; error: string }> {
+		// Precedence: the deployment's explicit choice, then the agent file's
+		// standing pin, then the spec's draw. An override that is wrong must
+		// not silently fall back to a draw the user did not ask for;
+		// spawnMember reports the problem instead.
+		if (member.modelOverride) {
+			return { ok: true, modelId: member.modelOverride, source: "override" };
+		}
 		if (member.agent.model) {
-			return { ok: true, modelId: member.agent.model };
+			return { ok: true, modelId: member.agent.model, source: "pin" };
 		}
 
 		const spec = member.spec;
@@ -982,7 +1059,24 @@ export class Fleet {
 		const result = drawForSpec(candidates, this.config, this.overrides, this.evidence, spec, "member spec");
 		warnings.push(...result.notes);
 		if (!result.ok) return { ok: false, error: result.error };
-		return { ok: true, modelId: result.modelId };
+		return { ok: true, modelId: result.modelId, source: "draw" };
+	}
+
+	/**
+	 * Why a model id cannot be used, or undefined when it can. Runs for
+	 * draws too: the catalog is the authority, and a member whose model
+	 * vanished between listing and spawning deserves the same sentence as
+	 * a typo in an explicit choice.
+	 */
+	private modelProblem(modelId: string): string | undefined {
+		const slash = modelId.indexOf("/");
+		if (slash <= 0 || slash === modelId.length - 1) {
+			return `"${modelId}" is not a physical model id — use provider/model-id`;
+		}
+		const model = this.ctx.modelRegistry.find(modelId.slice(0, slash), modelId.slice(slash + 1));
+		if (!model) return `"${modelId}" is not in the model catalog`;
+		if (!this.ctx.modelRegistry.hasConfiguredAuth(model)) return `"${modelId}" has no configured auth`;
+		return undefined;
 	}
 
 	status(extraWarnings: string[] = []): TeamStatus {
@@ -992,6 +1086,7 @@ export class Fleet {
 			description: m.agent.description.split("\n")[0],
 			spec: m.spec ? `τ${m.spec.temperature} ${Object.keys(m.spec.weights).join(",")}` : undefined,
 			model: m.modelId,
+			modelSource: m.modelSource,
 			state: m.state,
 			note: m.note,
 			workspace:

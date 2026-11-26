@@ -217,15 +217,29 @@ export class WorktreeManager {
 			if (!wt || !ref?.startsWith("refs/heads/quartermaster/")) continue;
 			const branch = ref.slice("refs/heads/".length);
 			const [, team = "", ...rest] = branch.split("/");
-			const missing = !fs.existsSync(wt);
+			// A tree can vanish between the listing and the checks (a dissolve
+			// running alongside): treat that as missing, not as a failure.
+			let missing = !fs.existsSync(wt);
+			let dirty = false;
+			let lastUsed: number | null = null;
+			if (!missing) {
+				try {
+					dirty = await this.isDirty(wt);
+					lastUsed = fs.statSync(wt).mtimeMs;
+				} catch {
+					missing = true;
+					dirty = false;
+					lastUsed = null;
+				}
+			}
 			out.push({
 				path: wt,
 				branch,
 				team,
 				member: rest.join("/"),
 				missing,
-				dirty: missing ? false : await this.isDirty(wt),
-				lastUsed: missing ? null : fs.statSync(wt).mtimeMs,
+				dirty,
+				lastUsed,
 				unmergedCommits: await this.unmerged(info.toplevel, branch, undefined),
 			});
 		}

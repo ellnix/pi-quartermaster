@@ -1,6 +1,41 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.0]
+### Added
+- One agent definition can be launched several times under different names:
+  `convene_team` members and `add_member` take an optional `name`
+  (`builder` as `builder-a` and `builder-b`). Each is its own member with
+  its own draw, worktree, channels and rating; `team_list` shows
+  `builder-a (from builder)`. Per-launch stance comes from the convene's
+  `spec` override.
+
+### Fixed
+- A member that asks a question can now be answered: every send tells the
+  sender whether the recipient has a mailbox back, and names it, so a
+  member with no way back stops waiting instead of hanging. The `send`
+  tool description says replies arrive as later messages and cannot be
+  polled.
+- Channel changes reach the members they affect. Opening or closing a
+  mailbox (and the `mailboxes` of `add_member`) queues a short notice for
+  both ends, delivered ahead of their next message; a not-yet-started
+  member learns the current channels from its standing instructions.
+  Previously running members never learned a channel existed.
+- `team_list` "unread reports" counted every report ever written. It now
+  counts only reports newer than your last `read_channel "reports"`.
+- Identical warnings (for example the unrated-candidates note, once per
+  drawn member) are reported once.
+- Wake digests name the team they came from and how old each report is,
+  so one that arrives late (after a long turn, or after a dissolve) cannot
+  be mistaken for news from the running team.
+- The `worktrees` listing no longer fails when a tree is removed while it is
+  being listed.
+- `team_list` with no team shows each agent's `worktree` setting.
+- Provisioning is gated on project trust: when pi does not trust the
+  project, the `setup` and `copy` in its `.pi/team/worktrees.jsonc` are
+  skipped (members still get their own tree, bare, and the convene result
+  says why). `setup` is shell from the repository, and pi gates project
+  config on trust for the same reason.
+
 ### Changed
 - Ratings now refine your scores instead of replacing them. A `models.yaml`
   score (or override) is a beta prior worth `k` pseudo-trials
@@ -12,8 +47,6 @@
   re-anchored when read, so editing a score or `k` takes effect on the next
   draw. `priorStrength: 1` is the closest to the old behaviour. `minScores`
   gates are unchanged.
-
-### Changed
 - Crewmen are told what their mailboxes are for: they are sanctioned by the
   Quartermaster, using them lightens its load, and the recipient already
   knows the sender, so no introductions are needed. The statement appears
@@ -66,11 +99,6 @@
   added/removed markers), their channels close with logs preserved, and
   `rate_member` still works for them. Composition history is appended to
   `composition.jsonl`. Later members' spawn prompts list the current team.
-- Agent `variants`: one file declares several addressable agents sharing the
-  prompt and tools, each with its spec deep-merged over the file's
-  (weights, temperature, filters). Each variant is drawn independently and
-  rated on its own; `team_list` shows `builder-cheap (builder)`. No
-  `variants` block behaves exactly as before.
 - One mailbox template can back many wirings. A template wired once keeps
   its channel name and log; wired more than once, each pairing gets
   channel `<template>__<from>--<to>` with an isolated log. `read_channel`

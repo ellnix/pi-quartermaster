@@ -66,8 +66,8 @@ function teamText(status: TeamStatus): { content: { type: "text"; text: string }
 		if (avail && avail.agents.length > 0) {
 			lines.push("", "Agents you can convene (pick by description; each has its own tools and spec):");
 			for (const a of avail.agents) {
-				lines.push(`- ${a.name}${a.definition ? ` (variant of ${a.definition})` : ""} — ${a.description}`);
-				lines.push(`    tools: ${a.tools}; spec: ${a.pinnedModel ? `pinned to ${a.pinnedModel}` : a.spec}`);
+				lines.push(`- ${a.name}${a.definition && a.definition !== a.name ? ` (from ${a.definition})` : ""} — ${a.description}`);
+				lines.push(`    tools: ${a.tools}; spec: ${a.pinnedModel ? `pinned to ${a.pinnedModel}` : a.spec}${a.worktree ? `; worktree: ${a.worktree}` : ""}`);
 			}
 		}
 		if (avail && avail.mailboxes.length > 0) {
@@ -116,6 +116,17 @@ function channelText(result: ReadChannelResult): { content: { type: "text"; text
 	for (const w of result.warnings) lines.push(`warning: ${w}`);
 	return text(lines.length ? lines.join("\n") : `No traffic on ${result.channel}.`);
 }
+
+const NAME_FIELD = {
+	name: Type.Optional(
+		Type.String({
+			description:
+				"The name this crewman goes by in the team. Defaults to the agent's name. Give distinct names to launch several crewmen from one agent definition " +
+				"(e.g. agent builder as builder-a and builder-b): same prompt and tools, each with its own draw, worktree and rating. " +
+				"Letters, digits, '.', '_' and '-'; no '--' or '__'.",
+		}),
+	),
+};
 
 const WORKSPACE_FIELDS = {
 	worktree: Type.Optional(
@@ -227,6 +238,7 @@ export default function quartermaster(pi: ExtensionAPI): void {
 				Type.Object({
 					agent: Type.String({ description: "Agent definition name (from the agent dir: team/agents/, or the project .pi/agents/)." }),
 					spec: Type.Optional(SPEC_OVERRIDE),
+					...NAME_FIELD,
 					...WORKSPACE_FIELDS,
 					task: Type.Optional(Type.String({ description: "The initial task for this member. Self-contained enough to start from. Omit or \"\" to convene idle (not started); the first message_member starts it. Whitespace-only is an error." })),
 				}),
@@ -376,13 +388,14 @@ export default function quartermaster(pi: ExtensionAPI): void {
 		name: "add_member",
 		label: "Add member",
 		description:
-			"Add a member to the live team: one draw now under the agent's (or variant's) spec, " +
+			"Add a member to the live team: one draw now under the agent's spec, " +
 			"the same gates as convening. A failed draw leaves the team unchanged. The task may be " +
 			"omitted to add the member armed (idle, not started; its first message starts it). " +
 			"mailboxes extends the channel graph; existing wiring is untouched, and members already " +
-			"running are not told about new channels. Logged in the record's composition history.",
+			"running hear of new channels at their next message. Logged in the record's composition history.",
 		parameters: Type.Object({
-			agent: Type.String({ description: "Agent or variant name." }),
+			agent: Type.String({ description: "Agent definition name." }),
+			...NAME_FIELD,
 			spec: Type.Optional(SPEC_OVERRIDE),
 			...WORKSPACE_FIELDS,
 			task: Type.Optional(Type.String({ description: "Initial task. Omit or \"\" to add idle. Whitespace-only is an error." })),
@@ -442,7 +455,7 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			"Open a channel between two live members, from a mailbox template, on a running team. " +
 			"The same wiring rules as convening: the endpoints must be active members, and the same " +
 			"template with the same endpoints cannot be open twice (a closed one is reopened, log " +
-			"intact). Members are not told; message them if they should know. Logged in the " +
+			"intact). Both members are told at their next message. Logged in the " +
 			"composition history.",
 		parameters: Type.Object({
 			name: Type.String({ description: "Mailbox template name." }),

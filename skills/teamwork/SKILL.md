@@ -25,16 +25,18 @@ Standing orders for the quartermaster.
 
 ## Changing the team mid-flight
 
-- `add_member` draws one new member into the live team (an agent or
-  variant name; the task may be omitted to add it armed). Use it when
-  scope grows, a specialist is needed, or a variant should race. It
+- `add_member` draws one new member into the live team (an agent name,
+  optionally launched under another `name`; the task may be omitted to
+  add it armed). Use it when scope grows, a specialist is needed, or a
+  second copy of an agent should race. It
   takes an optional `mailboxes` list for the new member's channels;
-  members already running are not told about them, so message them.
+  members already running hear of them at their next message.
   A failed draw leaves the team untouched. Channels are managed
   separately: `open_mailbox` wires a template between two live members
   and `close_mailbox` shuts a channel (an abused or finished one); a
   closed channel keeps its log and `open_mailbox` can revive it. Members
-  are not told when channels change, so message them.
+  are told at their next message; a member that has not started learns
+  from its standing instructions.
 - `remove_member` retires a member whose part is done, who is stuck, or
   who lost a race. It refuses while the member works or has pending
   asks; `force: true` interrupts and denies the asks. Channels close,
@@ -42,7 +44,7 @@ Standing orders for the quartermaster.
   `rate_member` still works on a removed member, but an unrated removal
   loses its evidence.
 - Prefer these over dissolve and reconvene, which re-draws everyone.
-  A removed name stays in the record; add a variant with another name.
+  A removed name stays in the record; launch the agent again under another `name`.
 
 ## Convening
 
@@ -111,11 +113,13 @@ whichever two agents your list offers for implementing and reviewing.
 ```json
 { "members": [
     { "agent": "<implementer>", "task": "<complete task, as in example 1>" },
-    { "agent": "<reviewer>",    "task": "Review the implementer's work on `fix/invoice-rounding`. First write your risk list (what could go wrong with half-even rounding on this code path: negative lines, zero quantity, currency with no minor units). Then review the diff against it once the implementer reports. Send findings to the implementer on your mailbox; do not wait for me to relay." } ],
+    { "agent": "<reviewer>",    "worktree": "attach", "attachTo": "<implementer>", "task": "Review the implementer's work on `fix/invoice-rounding`. First write your risk list (what could go wrong with half-even rounding on this code path: negative lines, zero quantity, currency with no minor units). Then review the diff against it once the implementer reports. Send findings to the implementer on your mailbox; do not wait for me to relay." } ],
   "mailboxes": [
     { "name": "<mailbox for implementer -> reviewer>", "from": "<implementer>", "to": "<reviewer>" },
     { "name": "<mailbox for reviewer -> implementer>", "from": "<reviewer>",    "to": "<implementer>" } ] }
 ```
+
+Attaching the reviewer to the implementer's worktree (`worktree: "attach"`) lets it review the real tree while being unable to dirty it; the reviewer's agent must grant no `edit`/`write`, and the implementer must have its own worktree, which needs a git checkout. See the "Working trees" section for how placement works.
 
 Choose each mailbox by its description: one that lets the implementer
 ask the reviewer about intent, one that lets the reviewer send findings.
@@ -219,7 +223,9 @@ user's tree.
   first). It sees the tree and cannot dirty it: attach is refused for any
   agent granted `edit` or `write`. Tell it to wait for the builder's
   report, since it sees only what is on disk.
-- **Racing**: two builders (variants of one file) get two branches. When
+- **Racing**: launch one builder definition twice under different names
+  (`{"agent": "<builder>", "name": "builder-a"}` and `builder-b`; give each
+  its own `spec` override if their draws should differ). They get two branches. When
   both report, compare branches, not trees:
   `git diff <base>...quartermaster/<team>/<a>` against `<b>`. Keep the
   winner (merge it yourself; members never push) and `remove_member` the
@@ -239,6 +245,15 @@ user's tree.
 
 ## While the team works
 
+- **A mailbox is one-way.** A member that asks a question can only be
+  answered if the other member has a mailbox back to it: wire both
+  directions (a pair's two mailboxes), or `open_mailbox` the reverse. A
+  sender is told on every send whether the recipient can reply; a member
+  with no way back is told not to wait. Replies arrive later as messages
+  (nothing to poll). Both ends hear of channels you open or close at
+  their next message.
+- **"Unread" reports** counts only those you have not read with
+  `read_channel "reports"`; reading marks them read.
 - **Clarifications flow through mailboxes; reports flow to you.** Relay
   pointers, never prose. Mailbox traffic stays on demand — read channels
   with `read_channel`; the logs are plain JSONL, so read them with your

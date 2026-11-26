@@ -1,6 +1,6 @@
 {
   "name": "pi-quartermaster",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Convene, equip, and govern teams of sub-agents with your main pi session as the quartermaster.",
   "keywords": [
     "pi-package"

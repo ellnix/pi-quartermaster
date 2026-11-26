@@ -15,9 +15,9 @@ export type WorktreeMode = "shared" | "per-member" | "attach";
 export const WORKTREE_MODES: readonly WorktreeMode[] = ["shared", "per-member", "attach"];
 
 export interface AgentDef {
-	/** The addressable agent name: the file's name, or a variant's name. */
+	/** The agent's name: the file's `name`, or the name a crewman was launched under. */
 	name: string;
-	/** The definition (file) this agent came from; differs from `name` for variants. */
+	/** The definition (file) this agent came from; differs from `name` when launched under another name. */
 	definition: string;
 	description: string;
 	/** Pre-approved tool surface; anything outside it must be asked for. */
@@ -103,105 +103,37 @@ function collectFromDir(
 			else warnings.push({ file: filePath, message: `worktree must be one of ${WORKTREE_MODES.join(", ")} — ignored` });
 		}
 
-		const variants = parseVariants(parsed.frontmatter.variants, filePath, warnings);
-		// Each addressable agent: scaffolding (prompt, tools, model pin) is
-		// shared; stance (the spec) is the definition's, deep-merged with the
-		// variant's own overrides. No variants block: one agent, the file's.
-		const expanded: Array<{ name: string; spec: SpecDef | undefined }> = [];
-		if (variants) {
-			for (const [variantName, override] of variants) {
-				const merged = deepMerge(parsed.frontmatter.spec, override);
-				const hasSpec = typeof merged === "object" && merged !== null && Object.keys(merged).length > 0;
-				const spec = hasSpec ? validateSpec(merged, `${filePath} (variant ${variantName})`, warnings) : null;
-				expanded.push({ name: variantName, spec: spec ?? undefined });
-			}
-		} else {
-			const spec =
-				parsed.frontmatter.spec !== undefined
-					? validateSpec(parsed.frontmatter.spec, filePath, warnings)
-					: undefined;
-			expanded.push({ name, spec: spec ?? undefined });
-		}
+		const spec =
+			parsed.frontmatter.spec !== undefined
+				? validateSpec(parsed.frontmatter.spec, filePath, warnings)
+				: undefined;
 
-		for (const agent of expanded) {
-			if (agents.has(agent.name)) {
-				// A project file with the same name replaces the user one; that is
-				// the override rule, so only warn when both come from the same layer.
-				const existing = agents.get(agent.name)!;
-				if (existing.source === source) {
-					warnings.push({
-						file: filePath,
-						message: `duplicate agent name "${agent.name}" (first definition: ${existing.filePath}) — skipped`,
-					});
-					continue;
-				}
-			}
-
-			agents.set(agent.name, {
-				name: agent.name,
-				definition: name,
-				description,
-				tools: toList(parsed.frontmatter.tools),
-				spec: agent.spec,
-				model: str(parsed.frontmatter.model) || undefined,
-				worktree,
-				systemPrompt: parsed.body,
-				source,
-				filePath,
-			});
-		}
-	}
-}
-
-const VARIANT_KEYS = new Set(["weights", "temperature", "filters"]);
-
-/**
- * Read the `variants` block: addressable agent name -> spec overrides
- * (weights, temperature, filters, written flat). Null when absent or
- * unusable, in which case the file is one agent named after itself.
- */
-function parseVariants(
-	value: unknown,
-	file: string,
-	warnings: DiscoveryWarning[],
-): Array<[string, Record<string, unknown>]> | null {
-	if (value === undefined) return null;
-	if (typeof value !== "object" || value === null || Array.isArray(value) || Object.keys(value).length === 0) {
-		warnings.push({ file, message: "variants must be a non-empty object of name -> spec overrides — ignored" });
-		return null;
-	}
-	const out: Array<[string, Record<string, unknown>]> = [];
-	for (const [variantName, raw] of Object.entries(value as Record<string, unknown>)) {
-		if (raw !== null && (typeof raw !== "object" || Array.isArray(raw))) {
-			warnings.push({ file, message: `variant "${variantName}" must be an object (use {} to inherit) — skipped` });
-			continue;
-		}
-		const override: Record<string, unknown> = {};
-		for (const [key, v] of Object.entries((raw ?? {}) as Record<string, unknown>)) {
-			if (!VARIANT_KEYS.has(key)) {
+		if (agents.has(name)) {
+			// A project file with the same name replaces the user one; that is
+			// the override rule, so only warn when both come from the same layer.
+			const existing = agents.get(name)!;
+			if (existing.source === source) {
 				warnings.push({
-					file,
-					message: `variant "${variantName}": unknown key "${key}" ignored (variants override weights, temperature, filters)`,
+					file: filePath,
+					message: `duplicate agent name "${name}" (first definition: ${existing.filePath}) — skipped`,
 				});
 				continue;
 			}
-			override[key] = v;
 		}
-		out.push([variantName, override]);
+
+		agents.set(name, {
+			name,
+			definition: name,
+			description,
+			tools: toList(parsed.frontmatter.tools),
+			spec: spec ?? undefined,
+			model: str(parsed.frontmatter.model) || undefined,
+			worktree,
+			systemPrompt: parsed.body,
+			source,
+			filePath,
+		});
 	}
-	return out.length > 0 ? out : null;
-}
-
-/** Deep-merge plain objects, the override winning; anything else is replaced. */
-function deepMerge(base: unknown, over: unknown): unknown {
-	if (!isPlain(base) || !isPlain(over)) return over === undefined ? base : over;
-	const out: Record<string, unknown> = { ...base };
-	for (const [k, v] of Object.entries(over)) out[k] = k in base ? deepMerge(base[k], v) : v;
-	return out;
-}
-
-function isPlain(v: unknown): v is Record<string, unknown> {
-	return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 function str(value: unknown): string {

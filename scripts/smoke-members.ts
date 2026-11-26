@@ -10,6 +10,7 @@
 
 import * as fs from "node:fs";
 import * as os from "node:os";
+import { DEFAULT_WORKTREES } from "../src/config/worktrees.ts";
 import { Fleet } from "../src/fleet/fleet.ts";
 import { appendAsk, readChannelLog, readComposition, pendingAsks, askResolution } from "../src/fleet/record.ts";
 
@@ -19,7 +20,7 @@ const template: any = { name: "ask", description: "d", preamble: "FROM ${from} T
 const config: any = {
 	agents: new Map([["builder", def("builder", spec)], ["scout", def("scout", spec)], ["nospec", def("nospec")]]),
 	mailboxes: new Map([["ask", template]]),
-	models: new Map(), authority: {}, warnings: [],
+	models: new Map(), authority: {}, worktrees: DEFAULT_WORKTREES, warnings: [],
 };
 
 const record = fs.mkdtempSync(`${os.tmpdir()}/qm-members-`);
@@ -44,13 +45,13 @@ const stubSession = (name: string, blocking = false) => {
 };
 const seed = (name: string, modelId: string, blocking = false) => {
 	const session: any = stubSession(name, blocking);
-	fleet.members.set(name, { name, agent: def(name), spec, modelId, session, state: "idle", pendingDelivery: [] });
+	fleet.members.set(name, { name, agent: def(name), spec, modelId, session, state: "idle", pendingDelivery: [], notices: [] });
 	return session;
 };
 // Stand in for the draw and session creation, which need a real registry.
 fleet.spawnMember = async (agent: any, _o: any, _w: string[], _drop: boolean) => {
 	const session: any = stubSession(agent.name);
-	const member = { name: agent.name, agent, spec: agent.spec, modelId: "p/new-model", session, state: "unstarted", pendingDelivery: [] };
+	const member = { name: agent.name, agent, spec: agent.spec, modelId: "p/new-model", session, state: "unstarted", pendingDelivery: [], notices: [] };
 	fleet.members.set(agent.name, member);
 	return member;
 };
@@ -115,7 +116,7 @@ ok("removing twice is refused", !(await fleet.removeMember({ member: "builder" }
 
 // A new member's spawn prompt lists the current team, not the removed one.
 fleet.spawnMember = async (agent: any) => {
-	const member = { name: agent.name, agent, spec: agent.spec, modelId: "p/m", session: stubSession(agent.name), state: "unstarted", pendingDelivery: [] };
+	const member = { name: agent.name, agent, spec: agent.spec, modelId: "p/m", session: stubSession(agent.name), state: "unstarted", pendingDelivery: [], notices: [] };
 	fleet.members.set(agent.name, member);
 	return member;
 };
@@ -146,6 +147,92 @@ ok("close by an ambiguous template name is refused, listing ids", !ambiguous.ok 
 ok("close_mailbox refuses an unknown channel", !(await fleet.closeMailbox({ channel: "zzz" })).ok);
 ok("composition log records channel open/close", readComposition(record).filter((e) => e.type === "channel_closed" && e.reason === "abused").length === 1 && readComposition(record).filter((e) => e.type === "channel_opened").length === 2);
 void scoutS;
+
+// Stumbling blocks found by using the system: replies, channel notices, unread, dedupe, trust.
+{
+	const reply = fleet.routeSend(fleet.members.get("reviewer"), "ask__reviewer--scout", "ping");
+	ok("a receipt says no reply is possible when the recipient has no mailbox back", typeof reply !== "string" && reply.replyChannel === undefined);
+	await fleet.openMailbox({ name: "ask", from: "scout", to: "reviewer" });
+	const withBack = fleet.routeSend(fleet.members.get("reviewer"), "ask__reviewer--scout", "ping2");
+	ok("and names the mailbox back once one exists", typeof withBack !== "string" && withBack.replyChannel === "ask__scout--reviewer");
+
+	const rev = fleet.members.get("reviewer");
+	rev.state = "idle";
+	rev.notices.length = 0;
+	await fleet.openMailbox({ name: "ask", from: "verifier", to: "reviewer" });
+	ok("an open queues a notice for both ends", rev.notices.length === 1 && fleet.members.get("verifier").notices.length >= 1);
+	const before = rev.session.prompts.length;
+	fleet.message("reviewer", "carry on", false);
+	await new Promise((r) => setTimeout(r, 10));
+	const delivered = rev.session.prompts[before] as string;
+	ok("the notice rides on the member's next message, once", delivered.includes("CHANNEL CHANGES") && delivered.includes("ask__verifier--reviewer") && rev.notices.length === 0);
+	fleet.message("reviewer", "again", false);
+	await new Promise((r) => setTimeout(r, 10));
+	ok("and is not repeated", !(rev.session.prompts[before + 1] as string).includes("CHANNEL CHANGES"));
+	await fleet.closeMailbox({ channel: "ask__verifier--reviewer" });
+	ok("a close notifies too", rev.notices.some((n: string) => n.includes("closed")));
+
+	// unread counts only reports the quartermaster has not read
+	const { appendReport } = await import("../src/fleet/record.ts");
+	appendReport(record, { ts: Date.now(), member: "scout", status: "complete", summary: "x" });
+	appendReport(record, { ts: Date.now(), member: "scout", status: "complete", summary: "y" });
+	const unreadBefore = fleet.status().unreadReports;
+	fleet.markReportsRead();
+	ok("unread counts drop to zero once reports are read", unreadBefore >= 2 && fleet.status().unreadReports === 0);
+	appendReport(record, { ts: Date.now(), member: "scout", status: "complete", summary: "z" });
+	ok("and count only newer ones afterwards", fleet.status().unreadReports === 1);
+
+	ok("identical warnings are reported once", fleet.status(["a", "a", "b"]).warnings.join() === "a,b");
+}
+
+// Project trust: an untrusted project's setup and copy are skipped, loudly.
+{
+	const mk = (trusted: boolean | undefined) => {
+		const cfg: any = { ...config, worktrees: { setup: ["touch ran"], copy: [".env"], filePath: "/x/worktrees.jsonc", keepOnDissolve: false, location: "tmp", default: "auto", setupTimeoutMs: 1000 } };
+		const ctx: any = { cwd: process.cwd() };
+		if (trusted !== undefined) ctx.isProjectTrusted = () => trusted;
+		return new Fleet(ctx, cfg, {} as any, {} as any) as any;
+	};
+	ok("untrusted project: setup and copy are disabled", mk(false).untrustedSetup === true);
+	ok("trusted project: they run", mk(true).untrustedSetup === false);
+	ok("no trust API: unchanged behaviour", mk(undefined).untrustedSetup === false);
+}
+
+// One definition, many crewmen: the same agent launched under different names.
+{
+	const spawned: string[] = [];
+	fleet.spawnMember = async (agent: any) => {
+		spawned.push(`${agent.name}<-${agent.definition}`);
+		const member = { name: agent.name, agent, spec: agent.spec, modelId: `p/${agent.name}`, session: stubSession(agent.name), state: "unstarted", pendingDelivery: [], notices: [] };
+		fleet.members.set(agent.name, member);
+		return member;
+	};
+	config.agents.set("racer", def("racer", spec));
+	const a = await fleet.addMember({ agent: "racer", name: "racer-a" });
+	const b = await fleet.addMember({ agent: "racer", name: "racer-b", spec: { weights: { cost: 0.9 } } });
+	ok("the same agent can be added twice under different names", a.ok && b.ok && fleet.members.has("racer-a") && fleet.members.has("racer-b"));
+	ok("each keeps its lineage and its own name", fleet.members.get("racer-a").agent.definition === "racer" && fleet.members.get("racer-b").agent.name === "racer-b");
+	ok("the definition itself is untouched", config.agents.get("racer").name === "racer");
+	const status = fleet.status().members.find((m: any) => m.name === "racer-a");
+	ok("team_list shows the lineage", status.definition === "racer");
+	ok("the original name is still free", (await fleet.addMember({ agent: "racer" })).ok);
+	const dup = await fleet.addMember({ agent: "racer", name: "racer-a" });
+	ok("a taken name is refused with the way out", !dup.ok && dup.message.includes("distinct `name`"));
+	for (const bad of ["", "a b", "x/y", "-x", "a--b", "a__b", "quartermaster", "x".repeat(49)]) {
+		const r = await fleet.addMember({ agent: "racer", name: bad });
+		ok(`unusable name ${JSON.stringify(bad.slice(0, 12))} is refused`, !r.ok && /not usable|reserved/.test(r.message));
+	}
+	ok("an unknown agent is refused even with a name", !(await fleet.addMember({ agent: "nope", name: "n1" })).ok);
+	const before = fleet.members.size;
+	const warn: string[] = [];
+	// convene path: resolveAgent is shared, so check it directly for the name rules
+	const r1 = fleet.resolveAgent("racer", "conv-a");
+	ok("convene resolves a renamed copy of the definition", r1.ok && r1.agent.name === "conv-a" && r1.agent.definition === "racer" && r1.agent.systemPrompt === config.agents.get("racer").systemPrompt);
+	ok("and does not mutate the original", config.agents.get("racer").name === "racer" && before === fleet.members.size && warn.length === 0);
+	// worktree branches are per name
+	const { branchFor } = await import("../src/fleet/worktrees.ts");
+	ok("branches and channel ids derive from the name", branchFor("t1", "racer-a") !== branchFor("t1", "racer-b"));
+}
 
 // Dissolution skips removed sessions and leaves nothing running.
 log.length = 0;

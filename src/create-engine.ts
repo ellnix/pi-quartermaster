@@ -193,10 +193,20 @@ export function createEngine(ctx: ExtensionToolContext): QuartermasterEngine {
 			}
 			// A member that failed before a usable model was found never ran:
 			// rating it would write evidence against a model that may not exist.
-			if (resolution.state === "error" || !resolution.modelId) {
+			if (!resolution.modelId) {
 				return {
 					ok: false,
 					message: `${input.member} was not rated: it never resolved a usable model${resolution.note ? ` (${resolution.note})` : ""}`,
+				};
+			}
+			// A member whose run stopped on an error is a real outcome, so it
+			// stays ratable. One that never started — never messaged, removed
+			// before it worked, or a failed spawn — has no outcome to rate,
+			// whatever its state says.
+			if (resolution.runs === 0) {
+				return {
+					ok: false,
+					message: `${input.member} was not rated: it never started${resolution.note ? ` (${resolution.note})` : ""} — there is no outcome to rate`,
 				};
 			}
 			// A member with no spec has no dimensions: its name set, an agent
@@ -216,6 +226,11 @@ export function createEngine(ctx: ExtensionToolContext): QuartermasterEngine {
 			return {
 				ok: true,
 				message: `rated ${input.member} = ${outcome}${input.note ? ` (${input.note})` : ""}; evidence updated on ${resolution.modelId} for ${resolution.dimensions.map((d) => d.dimension).join(", ")}`,
+				// An outage is not a model quality signal. Still ratable — the
+				// quartermaster may know the failure was the model's — but not silently.
+				...(resolution.state === "error"
+					? { warnings: [`${input.member}'s last run stopped on an error — infrastructure failures are not model quality; rate only what the model did`] }
+					: {}),
 			};
 		},
 

@@ -64,16 +64,21 @@ export const DEFAULT_MATCHING: MatchingPolicy = {
 };
 
 /**
- * The `wake` section: whether the quartermaster hears about reports and
- * permission asks on its own.
+ * The `wake` section: whether the quartermaster hears about reports,
+ * unrecoverable errors, and permission asks on its own.
  *
- * Two kinds, two switches, no third: `channels/*.jsonl` is never watched, so
- * inter-agent mail cannot be promoted into a wake by configuration. `"off"`
- * for a kind is exactly the 0.1.0 pull-only protocol for that kind.
+ * Three kinds, three switches, no fourth: `channels/*.jsonl` is never
+ * watched, so inter-agent mail cannot be promoted into a wake by
+ * configuration. `"off"` for a kind is exactly the 0.1.0 pull-only protocol
+ * for that kind. Errors have their own switch because a member that stopped
+ * on an error is not routine progress: turning report wakes off must not
+ * silence the one report that usually needs a decision.
  */
 export interface WakePolicy {
-	/** Wake on a report landing in the record. */
+	/** Wake on a crewman report landing in the record. */
 	reports: "immediate" | "off";
+	/** Wake on an engine-filed unrecoverable run error. */
+	errors: "immediate" | "off";
 	/** Wake on a permission ask landing in the record. */
 	asks: "immediate" | "off";
 	/** Debounce window in ms: a burst of entries becomes one notice. */
@@ -82,6 +87,7 @@ export interface WakePolicy {
 
 export const DEFAULT_WAKE: WakePolicy = {
 	reports: "immediate",
+	errors: "immediate",
 	asks: "immediate",
 	// Long enough to merge two members finishing together, short enough that an
 	// ask is seen well inside its ~10-minute timeout.
@@ -155,6 +161,7 @@ function wakeOf(
 	const obj = value as Record<string, unknown>;
 	return {
 		reports: wakeKind(obj.reports, "reports", filePath, warnings),
+		errors: wakeKind(obj.errors, "errors", filePath, warnings),
 		asks: wakeKind(obj.asks, "asks", filePath, warnings),
 		debounceMs: debounceOf(obj.debounceMs, filePath, warnings),
 	};
@@ -162,7 +169,7 @@ function wakeOf(
 
 function wakeKind(
 	value: unknown,
-	key: "reports" | "asks",
+	key: "reports" | "errors" | "asks",
 	filePath: string,
 	warnings: DiscoveryWarning[],
 ): "immediate" | "off" {

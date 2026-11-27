@@ -23,6 +23,27 @@ fleet.teamId = "t";
 fleet.recordPath = record;
 
 const prompts: Record<string, string[]> = {};
+// Sessions announce their runs the way a real AgentSession does: the fleet
+// follows those events, so a stub without them is not a valid stand-in.
+const sessionFor = (name: string) => {
+	const listeners: Array<(event: any) => void> = [];
+	const emit = (event: any) => {
+		for (const l of listeners) l(event);
+	};
+	return {
+		subscribe: (listener: (event: any) => void) => {
+			listeners.push(listener);
+			return () => {};
+		},
+		async prompt(t: string) {
+			prompts[name].push(t);
+			emit({ type: "agent_start" });
+			const message = { role: "assistant", content: [], stopReason: "stop" };
+			emit({ type: "message_end", message });
+			emit({ type: "agent_settled", aborted: false });
+		},
+	};
+};
 for (const name of ["builder", "reviewer", "scout"]) {
 	prompts[name] = [];
 	fleet.members.set(name, {
@@ -30,7 +51,7 @@ for (const name of ["builder", "reviewer", "scout"]) {
 		agent: agent(name),
 		state: "idle",
 		pendingDelivery: [], notices: [],
-		session: { prompt: async (t: string) => void prompts[name].push(t) },
+		session: sessionFor(name),
 	});
 }
 const checks: Array<[string, boolean]> = [];

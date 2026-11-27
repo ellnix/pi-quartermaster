@@ -19,9 +19,11 @@
 import {
 	createAgentSession,
 	type AgentSession,
+	type AgentSessionEvent,
 	type ExtensionToolContext,
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type {
 	Ack,
 	AddMemberInput,
@@ -46,7 +48,7 @@ import type { Overrides } from "../matching/overrides.ts";
 import { recordDir } from "../config/paths.ts";
 import { NotGitError, WorktreeManager, worktreesReport, type Placement } from "./worktrees.ts";
 import { crewmanTools, type CrewHooks, type SendReceipt } from "./crewman.ts";
-import { appendAsk, appendChannel, appendComposition, appendResolution, askResolution, ensureRecord, pendingAsks, readReports } from "./record.ts";
+import { appendAsk, appendChannel, appendComposition, appendReport, appendResolution, askResolution, ensureRecord, pendingAsks, readReports } from "./record.ts";
 
 /** Set around child session creation; quartermaster.ts stays inert under it. */
 export const CHILD_MARKER = "QM_CHILD";
@@ -60,6 +62,17 @@ interface FleetMember {
 	/** An explicit choice for this deployment; wins over the agent file's pin. */
 	modelOverride?: string;
 	modelSource?: ModelSource;
+	/**
+	 * Runs started on this member's session; 0 means it never got to work.
+	 * Agent loops, not prompts: a retry or a drained follow-up starts another.
+	 */
+	runs?: number;
+	/** A prompt is in flight — dispatched, not yet settled (a run or its preparation). */
+	preparing?: boolean;
+	/** The last assistant message of the current run, from its own events. */
+	runAssistant?: Extract<AgentMessage, { role: "assistant" }>;
+	/** The session's events are subscribed once per member. */
+	observed?: boolean;
 	session?: AgentSession;
 	state: MemberStatus["state"];
 	note?: string;
@@ -451,9 +464,11 @@ export class Fleet {
 
 			// Armed until started: session and model exist, no run, no tokens.
 			// The caller starts it once the team's channels are open; with no
-			// task, its first message does.
+			// task, its first message does. Its events are what will say how a
+			// run goes, so subscribe before it can start.
 			member.session = session;
 			member.state = "unstarted";
+			this.observe(member, session);
 			result = member;
 		});
 		this.creationChain = creation.catch(() => {});
@@ -462,22 +477,177 @@ export class Fleet {
 	}
 
 	/**
-	 * Run a member's prompt, tracking its state. A removed or dissolved member
-	 * stays so: a run settling after a forced removal must not resurrect it.
+	 * Follow one member's run lifecycle from its session's own events: this is
+	 * the authority for the member's state. A prompt resolving means only that
+	 * the input was accepted — it is queued when the session is busy and
+	 * deferred while the session settles — while a run announces itself with
+	 * `agent_start` and its outcome with the last assistant message before
+	 * `agent_settled`. Every run on the session is followed, including one
+	 * started from inside the child by an extension.
 	 */
-	private track(member: FleetMember, run: Promise<unknown>, what: string): void {
-		const gone = () => member.state === "removed" || member.state === "dissolved";
-		void run
-			.then(() => {
-				if (gone()) return;
+	private observe(member: FleetMember, session: AgentSession): void {
+		if (member.observed) return;
+		member.observed = true;
+		// A session stub without events has no run lifecycle to follow; every
+		// real AgentSession does.
+		if (typeof session.subscribe === "function") {
+			session.subscribe((event) => this.onSessionEvent(member, event));
+		}
+	}
+
+	private onSessionEvent(member: FleetMember, event: AgentSessionEvent): void {
+		if (member.state === "removed" || member.state === "dissolved") return;
+		switch (event.type) {
+			case "agent_start":
+				member.runs = (member.runs ?? 0) + 1;
+				member.runAssistant = undefined;
+				member.state = "working";
+				return;
+			case "message_end":
+				// Only the last assistant message of the run matters; an earlier,
+				// recovered attempt is superseded by a later one.
+				if (event.message.role === "assistant") member.runAssistant = event.message;
+				return;
+			case "agent_settled": {
+				// The run is over even before its prompt's promise resolves; a
+				// message arriving in that gap must not be queued behind a run
+				// that no longer exists.
+				member.preparing = false;
+				const failure = this.runFailure(member);
+				if (failure) {
+					this.failRun(member, "run", failure);
+					return;
+				}
 				member.state = "idle";
 				this.flushDeliveries(member);
-			})
-			.catch((err: unknown) => {
-				if (gone()) return;
-				member.state = "error";
-				member.note = `${what} failed: ${String(err)}`;
+				return;
+			}
+			default:
+				return;
+		}
+	}
+
+	/**
+	 * Start a member's prompt. The promise says only that the input was
+	 * accepted; the session's events decide the run and the member's state. A
+	 * rejection is the input being refused — before a run (no model, no auth,
+	 * compaction in progress), or a delivery that never reached a busy member.
+	 */
+	private track(member: FleetMember, what: string, run: () => Promise<unknown>, restore?: () => void): void {
+		const gone = () => member.state === "removed" || member.state === "dissolved";
+		if (member.session) this.observe(member, member.session);
+		member.preparing = true;
+		let started: Promise<unknown>;
+		try {
+			started = run();
+		} catch (err) {
+			// A prompt that throws before returning a promise (a session that
+			// vanished, say) must not escape into the caller's tool call.
+			member.preparing = false;
+			restore?.();
+			this.failRun(member, what, err instanceof Error ? err.message : String(err));
+			return;
+		}
+		void started.catch((err: unknown) => {
+			member.preparing = false;
+			if (gone()) return;
+			restore?.();
+			const error = err instanceof Error ? err.message : String(err);
+			// The run's own outcome is filed when it settles; this is what the
+			// session refused before or beyond that run.
+			if (member.state === "error") return;
+			if (member.state === "working") {
+				// A delivery that never reached the running member: its state
+				// is the run's to decide, but the quartermaster must hear that
+				// the message did not arrive.
+				member.note = `${what} failed: ${error}`;
+				this.fileError(member, member.note);
+				return;
+			}
+			this.failRun(member, what, error);
+		});
+	}
+
+	/**
+	 * Dispatch one prompt, in one place, so every input carries the same
+	 * posture: a `streamingBehavior` (a session that is busy after all queues
+	 * the input instead of refusing it) and the SDK's own dispatch verdict as
+	 * the release signal for `preparing`. "started" means a run of this
+	 * input's own is coming, and its `agent_settled` releases the flag;
+	 * "queued" and "handled" mean no run started, so nothing else would.
+	 */
+	private dispatch(
+		member: FleetMember,
+		what: string,
+		text: string,
+		behavior: "steer" | "followUp",
+		restore?: () => void,
+	): void {
+		const session = member.session;
+		if (!session) return;
+		this.track(
+			member,
+			what,
+			() =>
+				session.prompt(text, {
+					streamingBehavior: behavior,
+					preflightResult: (disposition) => {
+						if (disposition !== "started") member.preparing = false;
+					},
+				}),
+			restore,
+		);
+	}
+
+	/**
+	 * How the run ended, from the last assistant message it emitted. Only
+	 * "error" is an unrecoverable failure (provider failure, exhausted
+	 * retries); "aborted" is a deliberate interrupt, "length" a truncation,
+	 * and the rest finished. Reading the event, not the transcript, keeps
+	 * compaction (which rewrites the transcript mid-life) out of the question.
+	 */
+	private runFailure(member: FleetMember): string | undefined {
+		const message = member.runAssistant;
+		if (!message || message.stopReason !== "error") return undefined;
+		return message.errorMessage?.trim() || "the run stopped on an error";
+	}
+
+	/**
+	 * A run that could not continue: change the status and tell the
+	 * quartermaster. The member is left in place so the quartermaster can wake
+	 * it with a message, remove it, or do nothing.
+	 */
+	private failRun(member: FleetMember, what: string, error: string): void {
+		member.state = "error";
+		member.note = `${what} failed: ${error}`;
+		// Queued messages stay queued; say so, because a later run will deliver
+		// them and the quartermaster should know they are still waiting.
+		const stranded = member.pendingDelivery.length;
+		this.fileError(member, stranded > 0 ? `${member.note}; ${stranded} queued message(s) still undelivered` : member.note);
+	}
+
+	/**
+	 * File an engine report so the quartermaster hears about it through the
+	 * ordinary wake path (reports.jsonl holds engine reports alongside the
+	 * crewmen's). Never throws: a run failure must not become an unhandled
+	 * rejection because the record could not be written.
+	 */
+	private fileError(member: FleetMember, summary: string): void {
+		if (!this.recordPath) return;
+		const placement = member.placement && member.placement.mode !== "shared" ? member.placement : undefined;
+		try {
+			appendReport(this.recordPath, {
+				ts: Date.now(),
+				member: member.name,
+				status: "error",
+				summary,
+				...(placement ? { branch: placement.branch, worktree: placement.path } : {}),
 			});
+		} catch (err) {
+			// The note still carries the message; the record write is the only
+			// thing lost, and an unhandled rejection would lose more.
+			member.note = `${member.note} (error report not written: ${String(err)})`;
+		}
 	}
 
 	/**
@@ -589,7 +759,7 @@ export class Fleet {
 	/** Start a member's first run: standing instructions and channels, then the task. */
 	private startMember(member: FleetMember, task: string): void {
 		if (!member.session) return;
-		member.state = "working";
+		// No optimistic "working": the run's own agent_start says when it began.
 		member.notices = [];
 		const team = [...this.members.values()]
 			.filter((m) => m.state !== "removed" && m.name !== member.name)
@@ -602,7 +772,7 @@ export class Fleet {
 			team,
 			this.workspaceLines(member),
 		);
-		this.track(member, member.session.prompt(prompt), "run");
+		this.dispatch(member, "run", prompt, "followUp");
 	}
 
 	/**
@@ -715,35 +885,40 @@ export class Fleet {
 			? `CHANNEL CHANGES since you last heard from the Quartermaster:\n${notices.map((n) => `- ${n}`).join("\n")}\n\n`
 			: "";
 		const text = `${preface}${framing}\n${body}`;
+		const waiting = recipient.pendingDelivery.splice(0);
+		const outgoing = waiting.length > 0 ? [...waiting.map((m) => m.text), text].join("\n\n") : text;
+		// If the prompt is refused, those queued messages never landed either:
+		// put them back ahead of anything newer.
+		const restore = waiting.length > 0 ? () => recipient.pendingDelivery.unshift(...waiting) : undefined;
 
+		// A run — or the preparation before it starts — owns the session. A
+		// second plain prompt is refused by the SDK, so queue instead; a steer
+		// joins the run itself only once one is actually going.
+		if (recipient.preparing || recipient.state === "working" || recipient.state === "convening") {
+			if (behavior === "steer" && recipient.state === "working" && recipient.session) {
+				this.dispatch(recipient, "delivery", outgoing, "steer", restore);
+				return;
+			}
+			recipient.pendingDelivery.push({ text: outgoing });
+			return;
+		}
 		if (recipient.state === "unstarted") {
 			// First input starts the member. There is nothing to steer, so
 			// steer and follow-up behave identically here.
-			this.startMember(recipient, text);
+			this.startMember(recipient, outgoing);
 			return;
 		}
-		if (behavior === "steer" && recipient.state !== "working") {
-			// Nothing to interrupt: a steer degrades to a plain prompt.
-			this.track(recipient, recipient.session.prompt(text), "delivery");
-			return;
-		}
-		if (behavior === "followUp" && (recipient.state === "working" || recipient.state === "convening")) {
-			recipient.pendingDelivery.push({ text });
-			return;
-		}
-		recipient.state = "working";
-		this.track(
-			recipient,
-			recipient.session.prompt(text, { streamingBehavior: behavior === "steer" ? "steer" : "followUp" }),
-			"delivery",
-		);
+		// Idle or errored: a fresh run.
+		this.dispatch(recipient, "delivery", outgoing, behavior, restore);
 	}
 
 	private flushDeliveries(member: FleetMember): void {
 		const next = member.pendingDelivery.shift();
 		if (!next || !member.session) return;
-		member.state = "working";
-		this.track(member, member.session.prompt(next.text), "delivery");
+		// The session queues this itself if a run is still settling; its events
+		// will then decide the member's state. A refusal puts the message back
+		// at the head: it has left the queue, and losing it silently is worse.
+		this.dispatch(member, "delivery", next.text, "followUp", () => member.pendingDelivery.unshift(next));
 	}
 
 	/**
@@ -883,11 +1058,17 @@ export class Fleet {
 		if (!member) return { ok: false, message: `no member named "${input.member}" — see team_list` };
 		if (member.state === "removed") return { ok: false, message: `${input.member} was already removed` };
 
-		const busy = member.state === "working" || member.state === "convening";
+		// Preparing counts as busy: the run exists from the moment its prompt is
+		// dispatched, before agent_start can say so.
+		const busy = member.state === "working" || member.state === "convening" || member.preparing === true;
 		const asks = pendingAsks(this.recordPath!).filter((a) => a.member === member.name);
 		if (!input.force && (busy || asks.length > 0)) {
 			const why = [
-				busy ? `it is ${member.state}` : "",
+				busy
+					? member.state === "working" || member.state === "convening"
+						? `it is ${member.state}`
+						: "it is starting a run"
+					: "",
 				asks.length > 0 ? `${asks.length} permission ask(s) are pending (${asks.map((a) => a.id).join(", ")})` : "",
 			].filter(Boolean);
 			return {
@@ -920,8 +1101,12 @@ export class Fleet {
 		member.state = "removed";
 		member.removedAt = Date.now();
 		member.removedReason = input.reason;
+		const dropped = member.pendingDelivery.length;
 		member.pendingDelivery = [];
 		const warnings: string[] = [];
+		if (dropped > 0) {
+			warnings.push(`${dropped} queued message(s) to ${member.name} were dropped with it`);
+		}
 		if (session) {
 			try {
 				if (busy) await session.abort();
@@ -969,6 +1154,8 @@ export class Fleet {
 		modelId?: string;
 		state: MemberStatus["state"];
 		note?: string;
+		/** Runs started; 0 means the member never got to work, so there is no outcome. */
+		runs: number;
 		dimensions: Array<{ dimension: string; weight: number }>;
 	} | null {
 		const member = this.members.get(memberName);
@@ -980,7 +1167,7 @@ export class Fleet {
 				if (dimension !== "cost" && weight > 0) dimensions.push({ dimension, weight });
 			}
 		}
-		return { modelId: member.modelId, state: member.state, note: member.note, dimensions };
+		return { modelId: member.modelId, state: member.state, note: member.note, runs: member.runs ?? 0, dimensions };
 	}
 
 	/**

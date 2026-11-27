@@ -12,7 +12,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import { DEFAULT_WORKTREES } from "../src/config/worktrees.ts";
 import { Fleet } from "../src/fleet/fleet.ts";
-import { appendAsk, readChannelLog, readComposition, pendingAsks, askResolution } from "../src/fleet/record.ts";
+import { appendAsk, readChannelLog, readComposition, readReports, pendingAsks, askResolution } from "../src/fleet/record.ts";
 
 const def = (name: string, spec?: any): any => ({ name, definition: name, description: `${name} desc`, systemPrompt: "", source: "user", filePath: "", spec });
 const spec = { weights: { code: 0.8, cost: 0.2 }, temperature: 0.5 };
@@ -35,8 +35,11 @@ const stubSession = (name: string, blocking = false) => {
 		prompts: [] as string[],
 		aborted: false,
 		disposed: false,
-		prompt(t: string) {
+		prompt(t: string, options?: any) {
 			this.prompts.push(t);
+			// A stub runs nothing: tell the engine the input was consumed, so it
+			// does not wait for run events that will never come.
+			options?.preflightResult?.("handled");
 			return blocking ? new Promise<void>((r) => (release = r)) : Promise.resolve();
 		},
 		async abort() { this.aborted = true; release(); },
@@ -175,6 +178,202 @@ ok("a failed add says why in its warnings", (bad.warnings ?? []).some((w: string
 	const mixedRecord = mixed.recordPath;
 	await mixed.dissolve();
 	if (mixedRecord) fs.rmSync(mixedRecord, { recursive: true, force: true });
+}
+
+// Unrecoverable run errors (#40): a run that stops on an error changes the
+// member's status and files an engine report, so the wake digest notifies
+// the quartermaster with the message.
+{
+	const runs: any = new Fleet({} as any, config, {} as any, {} as any);
+	runs.teamId = "t-runs";
+	runs.recordPath = fs.mkdtempSync(`${os.tmpdir()}/qm-runs-`);
+	const sessionFor = (initial: "ok" | "error" | "aborted" | "reject") => {
+		let outcome = initial;
+		const listeners: Array<(event: any) => void> = [];
+		const emit = (event: any) => {
+			for (const l of listeners) l(event);
+		};
+		const session: any = {
+			state: { messages: [] as any[] },
+			subscribe: (listener: (event: any) => void) => {
+				listeners.push(listener);
+				return () => {};
+			},
+			async prompt(_text: string) {
+				// A refusal before a run (no auth, no model) starts nothing; a run
+				// announces itself with agent_start and ends with agent_settled.
+				if (outcome === "reject") throw new Error("websocket closed");
+				emit({ type: "agent_start" });
+				const message = {
+					role: "assistant",
+					content: [{ type: "text", text: "" }],
+					stopReason: outcome === "error" ? "error" : outcome === "aborted" ? "aborted" : "stop",
+					errorMessage: outcome === "error" ? "provider 500: upstream reset" : undefined,
+				};
+				this.state.messages.push(message);
+				emit({ type: "message_end", message });
+				emit({ type: "agent_settled", aborted: outcome === "aborted" });
+			},
+			async abort() {},
+			dispose() {},
+		};
+		return { session, set: (next: typeof initial) => (outcome = next) };
+	};
+	const settle = () => new Promise((r) => setTimeout(r, 10));
+	const seedRun = (name: string, stub: any) => {
+		runs.members.set(name, { name, agent: def(name), spec, modelId: `p/${name}`, session: stub.session, state: "unstarted", pendingDelivery: [], notices: [] });
+		runs.message(name, "do the work", false);
+		return runs.members.get(name);
+	};
+
+	const failedRun = sessionFor("error");
+	const failed = seedRun("failed", failedRun);
+	await settle();
+	ok("a run that stops on an error leaves the member in error", failed.state === "error");
+	ok("the member's note carries the error message", failed.note.includes("provider 500"));
+	const filed = readReports(runs.recordPath);
+	ok("the failure is filed as an engine error report", filed.length === 1 && filed[0].status === "error" && filed[0].member === "failed" && filed[0].summary.includes("provider 500"));
+	ok("and the run is counted, so the member stays ratable", runs.memberForRating("failed")?.runs === 1);
+
+	// Waking it: a successful run returns it to idle, with no second report.
+	failedRun.set("ok");
+	runs.message("failed", "try again", false);
+	await settle();
+	ok("a message wakes an errored member and a good run returns it to idle", failed.state === "idle" && readReports(runs.recordPath).length === 1);
+
+	const stopped = seedRun("stopped", sessionFor("aborted"));
+	await settle();
+	ok("an aborted run is not an error and files nothing", stopped.state === "idle" && stopped.note === undefined);
+
+	const broken = seedRun("broken", sessionFor("reject"));
+	await settle();
+	ok("a rejected prompt is an error too", broken.state === "error" && broken.note.includes("websocket closed"));
+	ok("and it is filed with its message", readReports(runs.recordPath).some((r: any) => r.member === "broken" && r.status === "error" && r.summary.includes("websocket closed")));
+
+	// Never started vs ran then failed: only the former is unratable.
+	runs.members.set("never", { name: "never", agent: def("never"), spec, modelId: "p/never", state: "error", pendingDelivery: [], notices: [] });
+	ok("a member that never started has no runs", runs.memberForRating("never")?.runs === 0);
+	ok("a prompt rejected before any run counts no run, so there is no outcome to rate", runs.memberForRating("broken")?.runs === 0);
+
+	// A prompt queued into a run already in flight is not a run of its own: it
+	// must not flip the member to idle, count a run, or file a report.
+	{
+		const listeners: Array<(event: any) => void> = [];
+		const emit = (event: any) => {
+			for (const l of listeners) l(event);
+		};
+		let release: () => void = () => {};
+		const session: any = {
+			busy: false,
+			subscribe: (listener: (event: any) => void) => {
+				listeners.push(listener);
+				return () => {};
+			},
+			async prompt(_text: string) {
+				if (this.busy) return; // queued into the run in flight: accepted, no run
+				this.busy = true;
+				emit({ type: "agent_start" });
+				await new Promise<void>((r) => (release = r));
+				const message = { role: "assistant", content: [], stopReason: "error", errorMessage: "provider down" };
+				emit({ type: "message_end", message });
+				emit({ type: "agent_settled", aborted: false });
+				this.busy = false;
+			},
+			async abort() {},
+			dispose() {},
+		};
+		runs.members.set("busy", { name: "busy", agent: def("busy"), spec, modelId: "p/busy", session, state: "unstarted", pendingDelivery: [], notices: [] });
+		const reportsBefore = readReports(runs.recordPath).length;
+		runs.message("busy", "go", false);
+		await settle();
+		const busyState = runs.members.get("busy");
+		ok("a run in flight leaves the member working", busyState.state === "working");
+		runs.message("busy", "steer", true);
+		await settle();
+		ok("a queued steer does not flip it idle or count a run", busyState.state === "working" && runs.memberForRating("busy")?.runs === 1);
+		ok("and it files nothing on its own", readReports(runs.recordPath).length === reportsBefore);
+		release();
+		await settle();
+		ok("the run's own settle decides the outcome, once", busyState.state === "error" && readReports(runs.recordPath).length === reportsBefore + 1);
+	}
+
+	// A message sent while the first run is still preparing must queue, not
+	// race the session into "already processing" and a false error.
+	{
+		const listeners: Array<(event: any) => void> = [];
+		const emit = (event: any) => {
+			for (const l of listeners) l(event);
+		};
+		let release: () => void = () => {};
+		const prompts: string[] = [];
+		const session: any = {
+			subscribe: (listener: (event: any) => void) => {
+				listeners.push(listener);
+				return () => {};
+			},
+			async prompt(text: string) {
+				prompts.push(text);
+				// The first run spends time preparing before agent_start.
+				if (prompts.length === 1) await new Promise<void>((r) => (release = r));
+				emit({ type: "agent_start" });
+				const message = { role: "assistant", content: [], stopReason: "stop" };
+				emit({ type: "message_end", message });
+				emit({ type: "agent_settled", aborted: false });
+			},
+			async abort() {},
+			dispose() {},
+		};
+		runs.members.set("slow", { name: "slow", agent: def("slow"), spec, modelId: "p/slow", session, state: "unstarted", pendingDelivery: [], notices: [] });
+		const reportsBefore = readReports(runs.recordPath).length;
+		runs.message("slow", "first", false);
+		await settle();
+		runs.message("slow", "second", false);
+		await settle();
+		const slow = runs.members.get("slow");
+		ok("a message during preparation is queued, not refused", slow.state !== "error" && slow.pendingDelivery.length === 1 && readReports(runs.recordPath).length === reportsBefore);
+		ok("a member preparing its first run counts as busy for removal", !(await runs.removeMember({ member: "slow" })).ok);
+		release();
+		await settle();
+		ok("the queued message is delivered after the first run settles", prompts.length === 2 && slow.state === "idle" && slow.pendingDelivery.length === 0);
+	}
+
+	// An unstarted member whose session is busy after all (a deferred run) must
+	// be queued by the session, never refused into a false error and lost text.
+	{
+		const delivered: string[] = [];
+		const listeners: Array<(event: any) => void> = [];
+		const emit = (event: any) => {
+			for (const l of listeners) l(event);
+		};
+		const session: any = {
+			active: true,
+			subscribe: (listener: (event: any) => void) => {
+				listeners.push(listener);
+				return () => {};
+			},
+			async prompt(text: string, options?: any) {
+				if (this.active && !options?.streamingBehavior) {
+					throw new Error("Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.");
+				}
+				delivered.push(text);
+			},
+			async abort() {},
+			dispose() {},
+		};
+		runs.members.set("race", { name: "race", agent: def("race"), spec, modelId: "p/race", session, state: "unstarted", pendingDelivery: [], notices: [] });
+		const reportsBefore = readReports(runs.recordPath).length;
+		runs.message("race", "hello", false);
+		await settle();
+		const race = runs.members.get("race");
+		ok("a busy session queues the first input instead of refusing it", race.state !== "error" && delivered.length === 1 && readReports(runs.recordPath).length === reportsBefore);
+		session.active = false;
+		emit({ type: "agent_start" });
+		emit({ type: "agent_settled", aborted: false });
+		await settle();
+		ok("the run that was already coming still decides its state", race.state === "idle");
+	}
+
+	fs.rmSync(runs.recordPath, { recursive: true, force: true });
 }
 
 // Removal refuses while working, and reports why.

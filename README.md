@@ -78,8 +78,11 @@ channels. Reports carry tracking numbers (`r1, r2, ...`), messages too
 is logged to the team record and readable on demand. Mailbox traffic
 stays on demand; reports and permission asks also arrive as short wake
 digests (ids and one-line summaries), so a blocked member or a finished
-task is not missed while you are away. The `wake` section of
-`authority.jsonc` turns that off.
+task is not missed while you are away. A run that stops on an
+unrecoverable error changes the member's status to `error` and files an
+engine report with the message, which wakes you through its own switch
+(`wake.errors`, separate from `wake.reports`). The `wake` section of
+`authority.jsonc` turns any of these off.
 
 ## Development
 

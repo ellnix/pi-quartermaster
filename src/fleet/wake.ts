@@ -13,6 +13,9 @@
  *   nothing else. `channels/*.jsonl` is deliberately not watched: mailbox
  *   traffic between members is their business, and waking on it would burn
  *   the quartermaster's context on inter-agent prose it can read on demand.
+ *   An engine-filed report with status "error" (a run that stopped) is a
+ *   kind of its own: it wakes under `wake.errors`, independent of ordinary
+ *   report wakes, because it usually needs a decision.
  * - Notices are DIGESTS, never payloads: a report contributes its id, member,
  *   status and one summary line; an ask contributes its id, member and the
  *   requested action. The record stays the blackboard; the quartermaster
@@ -90,7 +93,10 @@ export interface WakeAsk {
 export interface WakeDetails {
 	/** The record the entries came from. */
 	recordPath: string;
+	/** Ordinary crewman reports. */
 	reports: WakeReport[];
+	/** Engine-filed reports with status "error": a member that stopped. */
+	errors: WakeReport[];
 	asks: WakeAsk[];
 	/** Entries that were newline-terminated but not readable as record JSON. */
 	malformed: number;
@@ -156,6 +162,7 @@ export class WakeWatcher {
 	private sweepTimer: ReturnType<typeof setInterval> | null = null;
 	private offsets = new Map<string, number>();
 	private pendingReports: WakeReport[] = [];
+	private pendingErrors: WakeReport[] = [];
 	private pendingAsks: WakeAsk[] = [];
 	private malformed = 0;
 
@@ -173,6 +180,7 @@ export class WakeWatcher {
 		this.stop();
 		this.recordPath = recordPath;
 		this.pendingReports = [];
+		this.pendingErrors = [];
 		this.pendingAsks = [];
 		this.malformed = 0;
 		fs.mkdirSync(recordPath, { recursive: true });
@@ -215,6 +223,7 @@ export class WakeWatcher {
 		this.watcher = null;
 		this.recordPath = null;
 		this.pendingReports = [];
+		this.pendingErrors = [];
 		this.pendingAsks = [];
 		this.malformed = 0;
 	}
@@ -231,6 +240,7 @@ export class WakeWatcher {
 	private drain(): void {
 		if (!this.recordPath) return;
 		const reports = this.policy.reports === "immediate";
+		const errors = this.policy.errors === "immediate";
 		const asks = this.policy.asks === "immediate";
 		// Both files are read even when a kind is off, so the offsets stay
 		// current: turning reports on mid-team must not replay the backlog.
@@ -240,6 +250,13 @@ export class WakeWatcher {
 			// parses is a record this watcher does not understand.
 			if (entry.kind !== "report") {
 				this.malformed += 1;
+				return;
+			}
+			// An engine-filed error wakes under its own switch: a run that
+			// stopped is not routine progress and must not be silenced by a
+			// reports-off policy.
+			if (entry.report.status === "error") {
+				if (errors) this.pendingErrors.push(entry.report);
 				return;
 			}
 			if (reports) this.pendingReports.push(entry.report);
@@ -253,7 +270,7 @@ export class WakeWatcher {
 			}
 			if (asks) this.pendingAsks.push(entry.ask);
 		});
-		if (this.pendingReports.length === 0 && this.pendingAsks.length === 0) return;
+		if (this.pendingReports.length === 0 && this.pendingErrors.length === 0 && this.pendingAsks.length === 0) return;
 		this.schedule();
 	}
 
@@ -288,15 +305,17 @@ export class WakeWatcher {
 	private flush(): void {
 		if (!this.recordPath) return;
 		const reports = this.pendingReports;
+		const errors = this.pendingErrors;
 		const asks = this.pendingAsks;
 		const malformed = this.malformed;
 		this.pendingReports = [];
+		this.pendingErrors = [];
 		this.pendingAsks = [];
 		this.malformed = 0;
-		if (reports.length === 0 && asks.length === 0 && malformed === 0) return;
+		if (reports.length === 0 && errors.length === 0 && asks.length === 0 && malformed === 0) return;
 		this.emit({
-			text: formatDigest({ recordPath: this.recordPath, reports, asks, malformed }),
-			details: { recordPath: this.recordPath, reports, asks, malformed },
+			text: formatDigest({ recordPath: this.recordPath, reports, errors, asks, malformed }),
+			details: { recordPath: this.recordPath, reports, errors, asks, malformed },
 		});
 	}
 
@@ -370,12 +389,20 @@ function parseLine(line: string): ParsedLine {
  */
 export function formatDigest(details: WakeDetails): string {
 	const counts: string[] = [];
+	if (details.errors.length > 0) counts.push(`${details.errors.length} error(s)`);
 	if (details.asks.length > 0) counts.push(`${details.asks.length} permission ask(s)`);
 	if (details.reports.length > 0) counts.push(`${details.reports.length} report(s)`);
 	// The team is named so a digest that arrives late, after a dissolve or a
 	// long turn, cannot be mistaken for news from the team that is running now.
 	const team = details.recordPath.split("/").filter(Boolean).pop() ?? "?";
 	const lines = [`Wake from the team record of ${team} (${counts.join(", ") || "unreadable entries"}).`];
+	if (details.errors.length > 0) {
+		lines.push("", "ERRORS — a failure the engine recorded:");
+		for (const report of details.errors) {
+			lines.push(`- ${report.id} (error${ageLine(report.ts)}) ${report.member}: ${oneLine(report.summary)}`);
+		}
+		lines.push("  team_list shows the member's state; a stopped member can be woken with message_member or retired with remove_member.");
+	}
 	if (details.asks.length > 0) {
 		lines.push("", "ASKS — a member is blocked and its ask times out in ~10 minutes:");
 		for (const ask of details.asks) {
@@ -386,8 +413,7 @@ export function formatDigest(details: WakeDetails): string {
 	if (details.reports.length > 0) {
 		lines.push("", "REPORTS — digests only, the record is the blackboard:");
 		for (const report of details.reports) {
-			const age = report.ts !== undefined ? `, ${ageOf(report.ts)}` : "";
-			lines.push(`- ${report.id} (${report.status}${age}) ${report.member}: ${oneLine(report.summary)}`);
+			lines.push(`- ${report.id} (${report.status}${ageLine(report.ts)}) ${report.member}: ${oneLine(report.summary)}`);
 		}
 		lines.push('  Full text: read_channel "reports".');
 	}
@@ -395,6 +421,11 @@ export function formatDigest(details: WakeDetails): string {
 		lines.push("", `${details.malformed} unreadable line(s) in the record — read the files directly.`);
 	}
 	return lines.join("\n");
+}
+
+/** ", just now", ", 4 min ago": the age suffix a digest line carries. */
+function ageLine(ts?: number): string {
+	return ts !== undefined ? `, ${ageOf(ts)}` : "";
 }
 
 /** "just now", "4 min ago", "2 h ago": enough to tell fresh news from a queued digest. */

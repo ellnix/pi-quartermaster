@@ -39,7 +39,12 @@ export interface ReportEntry {
 	id: string;
 	ts: number;
 	member: string;
-	status: "complete" | "partial" | "blocked";
+	/**
+	 * A crewman files complete/partial/blocked. The engine files "error": the
+	 * run stopped on an unrecoverable error (issue #40), which no crewman can
+	 * report because it is no longer running to report it.
+	 */
+	status: "complete" | "partial" | "blocked" | "error";
 	summary: string;
 	confidence?: number;
 	/** The member's branch and worktree, attached by the engine so a report can say where the work is. */

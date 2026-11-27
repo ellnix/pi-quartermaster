@@ -73,7 +73,10 @@ falling back to a draw, `team_list` marks it `(explicit)`, and the
 record keeps how every model was resolved.
 
 Members get `report`, `send`, and `request_permission` — their only
-channels. Reports carry tracking numbers (`r1, r2, ...`), messages too
+channels. A send normally waits until the recipient is idle; `send
+{ steer: true }` joins its run in flight, delivered at the next model
+call, which is how crewmates ask a blocking question mid-task. Reports
+carry tracking numbers (`r1, r2, ...`), messages too
 (`m1, m2, ...`), so all three parties steer by reference. All traffic
 is logged to the team record and readable on demand. Mailbox traffic
 stays on demand; reports and permission asks also arrive as short wake

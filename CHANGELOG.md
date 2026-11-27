@@ -36,6 +36,19 @@
   score or cost floors that were not applied. The choice still wins, but
   you hear what it skipped.
 
+- A crewman's mailbox `send` can steer: `send { steer: true }` joins the
+  recipient's run in flight — delivered at its next model call, held while
+  the run is prepared, starting a run if the member is idle — while the
+  default still waits until the recipient is idle. A run window takes at
+  most three steers; further ones queue as follow-ups. Across runs a
+  steered exchange is still bounded only by the runs themselves — every
+  reply costs a run, as any follow-up would. The traffic log records which
+  sends were steers, the recipient's framing says when a message is
+  steering (and not when the budget queued it), and the sender's receipt
+  says what the engine actually did (started, steered, held, queued). The
+  receipt reflects that decision at send time: a prompt an extension or
+  input hook consumes before it runs does not update it.
+
 ### Fixed
 - Steering no longer errors with the SDK's "Agent is already processing"
   refusal. A steer to a member whose run is in flight is queued into that

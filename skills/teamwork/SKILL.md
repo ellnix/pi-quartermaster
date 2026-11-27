@@ -275,8 +275,13 @@ user's tree.
   model call (usually before the first one, when the run is still being
   prepared). It never waits for the run to settle and never absorbs queued
   follow-ups. To an idle member it starts a run. Without `steer`, the
-  message waits as a follow-up. Steer for corrections; follow-up for
-  additions.
+  message waits as a follow-up. Crewmen can steer each other the same way
+  with `send { steer: true }`: it joins the recipient's run instead of
+  waiting for idle, which is what makes a mailbox usable for a blocking
+  question mid-task. A run window takes at most three steers; the rest
+  queue as follow-ups. Across runs a steered exchange still costs a run
+  per reply, like any follow-up would. Steer for corrections; follow-up
+  for additions.
 - **Permission asks**: `pending_asks` shows each ask with its policy
   classification. Auto-approvable categories you may resolve alone.
   Escalate-only categories require the user's confirmation quoted in

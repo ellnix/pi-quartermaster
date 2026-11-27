@@ -12,6 +12,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import { DEFAULT_WORKTREES } from "../src/config/worktrees.ts";
 import { Fleet } from "../src/fleet/fleet.ts";
+import { crewmanTools } from "../src/fleet/crewman.ts";
 import { appendAsk, readChannelLog, readComposition, readReports, pendingAsks, askResolution } from "../src/fleet/record.ts";
 
 const def = (name: string, spec?: any): any => ({ name, definition: name, description: `${name} desc`, systemPrompt: "", source: "user", filePath: "", spec });
@@ -558,6 +559,183 @@ ok("a failed add says why in its warnings", (bad.warnings ?? []).some((w: string
 	}
 
 	fs.rmSync(runs.recordPath, { recursive: true, force: true });
+}
+
+// A mailbox send can steer (crewman `send`), and the traffic log says so.
+{
+	const { crewmanTools } = await import("../src/fleet/crewman.ts");
+	const sent: Array<{ mailbox: string; body: string; steer?: boolean }> = [];
+	const tools = crewmanTools("sender", os.tmpdir(), {
+		onSend: (mailbox, body, steer) => {
+			sent.push({ mailbox, body, steer });
+			return { id: "m1", delivery: steer ? "steered" : "queued" };
+		},
+		onAsk: async () => ({ approve: true, note: "ok" }),
+		isActive: () => true,
+		workspace: () => undefined,
+	});
+	const send = tools.find((t: any) => t.name === "send") as any;
+	const steered = await send.execute("t1", { mailbox: "ask", body: "hurry", steer: true });
+	ok("a crewman send passes the steer flag through", sent.length === 1 && sent[0].steer === true && steered.content[0].text.includes("next model call"));
+	const queuedSend = await send.execute("t2", { mailbox: "ask", body: "later" });
+	ok("without steer the send waits for idle", sent[1].steer === undefined && queuedSend.content[0].text.includes("when idle"));
+}
+
+// A mailbox steer joins the recipient's run; a mailbox follow-up waits.
+{
+	const settle = () => new Promise((r) => setTimeout(r, 10));
+	const mail: any = new Fleet({} as any, config, {} as any, {} as any);
+	mail.teamId = "t-mail";
+	mail.recordPath = fs.mkdtempSync(`${os.tmpdir()}/qm-mail-`);
+	const prompts: Array<{ text: string; options?: any }> = [];
+	const session: any = {
+		async prompt(text: string, options?: any) {
+			prompts.push({ text, options });
+			options?.preflightResult?.("queued");
+		},
+		async abort() {},
+		dispose() {},
+	};
+	mail.members.set("sender", { name: "sender", agent: def("sender"), spec, modelId: "p/s", session: { async prompt() {} }, state: "idle", pendingDelivery: [], notices: [] });
+	mail.members.set("recipient", { name: "recipient", agent: def("recipient"), spec, modelId: "p/r", session, state: "working", pendingDelivery: [], notices: [] });
+	// Channels need their endpoints to exist: open after the members do.
+	mail.openChannel({ name: "ask", from: "sender", to: "recipient" }, false);
+	const receipt = mail.routeSend(mail.members.get("sender"), "ask", "instant", true);
+	await settle();
+	ok("a mailbox steer joins the recipient's run", typeof receipt !== "string" && prompts.length === 1 && prompts[0].options?.streamingBehavior === "steer" && receipt.delivery === "steered");
+	ok("the recipient is told the message is steering", prompts[0].text.includes("steering message"));
+	const later = mail.routeSend(mail.members.get("sender"), "ask", "later");
+	await settle();
+	ok("a mailbox follow-up waits for the run to settle", typeof later !== "string" && mail.members.get("recipient").pendingDelivery.length === 1 && later.delivery === "queued");
+	const log = readChannelLog(mail.recordPath, "ask");
+	ok("the traffic log records which send was a steer", log.length === 2 && log[0].steer === true && log[1].steer === undefined);
+
+	// The run's steering budget bounds a peer-to-peer loop.
+	const sender = mail.members.get("sender");
+	const queuedSteers: string[] = [];
+	for (let i = 2; i <= 4; i++) {
+		const extra = mail.routeSend(sender, "ask", `steer ${i}`, true);
+		queuedSteers.push(typeof extra === "string" ? extra : extra.delivery);
+	}
+	await settle();
+	ok("a run takes a bounded number of steers, then queues them", queuedSteers.join(",") === "steered,steered,queued" && mail.members.get("recipient").pendingDelivery.length === 1);
+	const overBudgetEntry = mail.members.get("recipient").pendingDelivery.find((m: any) => m.text.includes("steer 4"));
+	ok("an over-budget steer is framed as a follow-up, not a steer", overBudgetEntry !== undefined && !overBudgetEntry.text.includes("steering message"));
+	// The budget is per run window: a settlement gives the next run a fresh one.
+	mail.onSessionEvent(mail.members.get("recipient"), { type: "agent_settled", aborted: false });
+	await settle();
+	mail.members.get("recipient").state = "working";
+	const fresh = mail.routeSend(sender, "ask", "fresh steer", true);
+	ok("the steering budget resets when a run settles", typeof fresh !== "string" && fresh.delivery === "steered");
+
+	// A prompt consumed without a run gives its steering slot back.
+	const handledSteers: string[] = [];
+	const handledPeer: any = {
+		name: "handled-peer",
+		agent: def("handled-peer"),
+		spec,
+		modelId: "p/hp",
+		state: "working",
+		pendingDelivery: [],
+		notices: [],
+		session: {
+			async prompt(_text: string, options?: any) {
+				options?.preflightResult?.("handled");
+			},
+		},
+	};
+	mail.members.set("handled-peer", handledPeer);
+	mail.openChannel({ name: "ask", from: "sender", to: "handled-peer" }, true);
+	for (let i = 0; i < 4; i++) {
+		const sent = mail.routeSend(sender, "ask__sender--handled-peer", `steer ${i}`, true);
+		handledSteers.push(typeof sent === "string" ? sent : sent.delivery);
+	}
+	ok("a steer consumed without a run does not spend the budget", handledSteers.join(",") === "steered,steered,steered,steered");
+
+	// A member with no session is not told a message was sent.
+	mail.members.set("no-session", { name: "no-session", agent: def("no-session"), spec, modelId: "p/ns", state: "error", pendingDelivery: [], notices: [] });
+	ok("a message to a member with no session is refused", !mail.message("no-session", "hi", false).ok);
+
+	// A steer held for a run being prepared is injected when it starts.
+	const heldPrompts: Array<{ text: string; options?: any }> = [];
+	const heldSession: any = {
+		async prompt(text: string, options?: any) {
+			heldPrompts.push({ text, options });
+			options?.preflightResult?.(text.includes("preparing") ? "started" : "queued");
+		},
+		async abort() {},
+		dispose() {},
+	};
+	mail.members.set("preparing", { name: "preparing", agent: def("preparing"), spec, modelId: "p/p", session: heldSession, state: "unstarted", pendingDelivery: [], notices: [] });
+	mail.openChannel({ name: "ask", from: "sender", to: "preparing" }, true);
+	// The recipient is preparing: its first prompt is in flight but no agent_start yet.
+	mail.members.get("preparing").preparing = true;
+	const held = mail.routeSend(sender, "ask__sender--preparing", "held steer", true);
+	await settle();
+	ok("a steer to a preparing peer is held", typeof held !== "string" && held.delivery === "held" && mail.members.get("preparing").pendingDelivery.length === 1);
+	mail.onSessionEvent(mail.members.get("preparing"), { type: "agent_start" });
+	await settle();
+	ok("and injected as its run starts", heldPrompts.length === 1 && heldPrompts[0].options?.streamingBehavior === "steer" && heldPrompts[0].text.includes("held steer"));
+	// A steer to an idle peer starts it; a removed peer refuses the send; a
+	// session that refuses the steer re-holds it and files the failure.
+	const idlePrompts: string[] = [];
+	mail.members.set("idle-peer", {
+		name: "idle-peer",
+		agent: def("idle-peer"),
+		spec,
+		modelId: "p/ip",
+		state: "idle",
+		pendingDelivery: [],
+		notices: [],
+		session: {
+			async prompt(text: string, options?: any) {
+				idlePrompts.push(text);
+				options?.preflightResult?.("started");
+			},
+		},
+	});
+	mail.openChannel({ name: "ask", from: "sender", to: "idle-peer" }, true);
+	const toIdle = mail.routeSend(sender, "ask__sender--idle-peer", "wake", true);
+	await settle();
+	ok("a steer to an idle peer starts it", typeof toIdle !== "string" && toIdle.delivery === "started" && idlePrompts.length === 1);
+	mail.members.get("idle-peer").state = "removed";
+	ok("a steer to a removed peer is refused", typeof mail.routeSend(sender, "ask__sender--idle-peer", "x", true) === "string");
+
+	const refusing: any = {
+		name: "refusing",
+		agent: def("refusing"),
+		spec,
+		modelId: "p/rf",
+		state: "working",
+		pendingDelivery: [],
+		notices: [],
+		session: {
+			async prompt() {
+				throw new Error("steering queue closed");
+			},
+		},
+	};
+	mail.members.set("refusing", refusing);
+	mail.openChannel({ name: "ask", from: "sender", to: "refusing" }, true);
+	const reportsBefore = readReports(mail.recordPath).length;
+	const refusedSend = mail.routeSend(sender, "ask__sender--refusing", "keep me", true);
+	await settle();
+	ok(
+		"a refused steer is re-held and filed, not lost",
+		typeof refusedSend !== "string" &&
+			refusing.pendingDelivery.length === 1 &&
+			refusing.pendingDelivery[0].mode === "steer" &&
+			readReports(mail.recordPath).length === reportsBefore + 1,
+	);
+	// A refused steer gives its budget slot back, so refusals cannot wedge a run.
+	const refusedAgain: string[] = [];
+	for (let i = 0; i < 4; i++) {
+		const sent = mail.routeSend(sender, "ask__sender--refusing", `refused ${i}`, true);
+		refusedAgain.push(typeof sent === "string" ? sent : sent.delivery);
+		await settle();
+	}
+	ok("a refused steer does not spend the run's steering budget", refusedAgain.join(",") === "steered,steered,steered,steered");
+	fs.rmSync(mail.recordPath, { recursive: true, force: true });
 }
 
 // Removal refuses while working, and reports why.

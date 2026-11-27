@@ -270,11 +270,13 @@ user's tree.
 - **Members cite tracking numbers**: reports are `r1, r2, ...`, messages
   `m1, m2, ...`. Steer by reference — "regarding r3, do X instead" —
   rather than re-describing.
-- **Steering**: `message_member` with `steer: true` interrupts a running
-  member with your message; without it the message queues as a
-  follow-up. A steer sent when the member is not running (or is still
-  preparing its first run) has nothing to interrupt, so it is queued like
-  a follow-up. Steer for corrections; follow-up for additions.
+- **Steering**: `message_member` with `steer: true` joins the member's run
+  in flight: the session queues it and the run delivers it before its next
+  model call (usually before the first one, when the run is still being
+  prepared). It never waits for the run to settle and never absorbs queued
+  follow-ups. To an idle member it starts a run. Without `steer`, the
+  message waits as a follow-up. Steer for corrections; follow-up for
+  additions.
 - **Permission asks**: `pending_asks` shows each ask with its policy
   classification. Auto-approvable categories you may resolve alone.
   Escalate-only categories require the user's confirmation quoted in

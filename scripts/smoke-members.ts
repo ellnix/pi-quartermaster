@@ -255,23 +255,30 @@ ok("a failed add says why in its warnings", (bad.warnings ?? []).some((w: string
 	ok("a member that never started has no runs", runs.memberForRating("never")?.runs === 0);
 	ok("a prompt rejected before any run counts no run, so there is no outcome to rate", runs.memberForRating("broken")?.runs === 0);
 
-	// A prompt queued into a run already in flight is not a run of its own: it
-	// must not flip the member to idle, count a run, or file a report.
+	// A steer into a running member goes to the session's steering queue, not a
+	// second run, and not the engine's follow-up queue.
 	{
 		const listeners: Array<(event: any) => void> = [];
 		const emit = (event: any) => {
 			for (const l of listeners) l(event);
 		};
 		let release: () => void = () => {};
+		const prompts: Array<{ text: string; options?: any }> = [];
 		const session: any = {
 			busy: false,
 			subscribe: (listener: (event: any) => void) => {
 				listeners.push(listener);
 				return () => {};
 			},
-			async prompt(_text: string) {
-				if (this.busy) return; // queued into the run in flight: accepted, no run
+			async prompt(text: string, options?: any) {
+				prompts.push({ text, options });
+				if (this.busy) {
+					// Queued into the run in flight: accepted, no run of its own.
+					options?.preflightResult?.("queued");
+					return;
+				}
 				this.busy = true;
+				options?.preflightResult?.("started");
 				emit({ type: "agent_start" });
 				await new Promise<void>((r) => (release = r));
 				const message = { role: "assistant", content: [], stopReason: "error", errorMessage: "provider down" };
@@ -290,11 +297,188 @@ ok("a failed add says why in its warnings", (bad.warnings ?? []).some((w: string
 		ok("a run in flight leaves the member working", busyState.state === "working");
 		runs.message("busy", "steer", true);
 		await settle();
-		ok("a queued steer does not flip it idle or count a run", busyState.state === "working" && runs.memberForRating("busy")?.runs === 1);
-		ok("and it files nothing on its own", readReports(runs.recordPath).length === reportsBefore);
+		ok("a steer joins the run as a steer, not a second prompt to run", prompts.length === 2 && prompts[1].options?.streamingBehavior === "steer" && busyState.pendingDelivery.length === 0);
+		ok("and it flips nothing, counts no run, files nothing", busyState.state === "working" && runs.memberForRating("busy")?.runs === 1 && readReports(runs.recordPath).length === reportsBefore);
 		release();
 		await settle();
 		ok("the run's own settle decides the outcome, once", busyState.state === "error" && readReports(runs.recordPath).length === reportsBefore + 1);
+	}
+
+	// A steer during preparation is held in the engine queue (so a refused run
+	// counts it as undelivered) and injected the moment the run starts.
+	{
+		const listeners: Array<(event: any) => void> = [];
+		const emit = (event: any) => {
+			for (const l of listeners) l(event);
+		};
+		const prompts: Array<{ text: string; options?: any }> = [];
+		let release: () => void = () => {};
+		const session: any = {
+			subscribe: (listener: (event: any) => void) => {
+				listeners.push(listener);
+				return () => {};
+			},
+			async prompt(text: string, options?: any) {
+				prompts.push({ text, options });
+				options?.preflightResult?.("started");
+				if (prompts.length === 1) await new Promise<void>((r) => (release = r));
+				emit({ type: "agent_start" });
+				emit({ type: "message_end", message: { role: "assistant", content: [], stopReason: "stop" } });
+				emit({ type: "agent_settled", aborted: false });
+			},
+			async abort() {},
+			dispose() {},
+		};
+		runs.members.set("steer-prepping", { name: "steer-prepping", agent: def("steer-prepping"), spec, modelId: "p/sp", session, state: "unstarted", pendingDelivery: [], notices: [] });
+		runs.message("steer-prepping", "first", false);
+		await settle();
+		const prepping = runs.members.get("steer-prepping");
+		runs.message("steer-prepping", "course correct", true);
+		await settle();
+		ok("a steer during preparation is held as a steer, not stranded in the SDK", prepping.pendingDelivery.length === 1 && prepping.pendingDelivery[0].mode === "steer");
+		release();
+		await settle();
+		ok("agent_start injects it into the run as a steer", prompts.length === 2 && prompts[1].options?.streamingBehavior === "steer" && prepping.pendingDelivery.length === 0);
+		ok("and the run settles normally afterwards", prepping.state === "idle");
+		runs.message("steer-prepping", "wake up", true);
+		await settle();
+		ok("a steer to an idle member starts a run with the steer posture", prompts.length === 3 && prompts[2].options?.streamingBehavior === "steer");
+	}
+
+	// A steer held for a run whose preparation is refused is not lost: it is
+	// still queued, and the failure counts it as undelivered.
+	{
+		const listeners: Array<(event: any) => void> = [];
+		let rejectPrompt: (err: Error) => void = () => {};
+		const session: any = {
+			subscribe: (listener: (event: any) => void) => {
+				listeners.push(listener);
+				return () => {};
+			},
+			async prompt() {
+				await new Promise<void>((_resolve, reject) => (rejectPrompt = reject));
+			},
+			async abort() {},
+			dispose() {},
+		};
+		runs.members.set("refuse-steer", { name: "refuse-steer", agent: def("refuse-steer"), spec, modelId: "p/rs", session, state: "unstarted", pendingDelivery: [], notices: [] });
+		runs.message("refuse-steer", "go", false);
+		await settle();
+		runs.message("refuse-steer", "late steer", true);
+		await settle();
+		const refusing = runs.members.get("refuse-steer");
+		ok("a steer during preparation waits in the engine queue", refusing.pendingDelivery.length === 1 && refusing.pendingDelivery[0].mode === "steer");
+		rejectPrompt(new Error("no auth"));
+		await settle();
+		ok("a refused run keeps the steer queued and says it is undelivered", refusing.state === "error" && refusing.pendingDelivery.length === 1 && readReports(runs.recordPath).some((r: any) => r.member === "refuse-steer" && r.summary.includes("1 queued message")));
+	}
+
+	// A steer overtakes a queued follow-up without absorbing it: the follow-up
+	// must still wait for the run to settle and be delivered as a follow-up.
+	{
+		const listeners: Array<(event: any) => void> = [];
+		const emit = (event: any) => {
+			for (const l of listeners) l(event);
+		};
+		const prompts: Array<{ text: string; options?: any }> = [];
+		let release: () => void = () => {};
+		const session: any = {
+			subscribe: (listener: (event: any) => void) => {
+				listeners.push(listener);
+				return () => {};
+			},
+			async prompt(text: string, options?: any) {
+				prompts.push({ text, options });
+				if (prompts.length > 1) {
+					options?.preflightResult?.("queued");
+					return;
+				}
+				options?.preflightResult?.("started");
+				await new Promise<void>((r) => (release = r));
+				emit({ type: "agent_start" });
+				emit({ type: "message_end", message: { role: "assistant", content: [], stopReason: "stop" } });
+				emit({ type: "agent_settled", aborted: false });
+			},
+			async abort() {},
+			dispose() {},
+		};
+		runs.members.set("steer-order", { name: "steer-order", agent: def("steer-order"), spec, modelId: "p/so", session, state: "unstarted", pendingDelivery: [], notices: [] });
+		runs.message("steer-order", "go", false);
+		await settle();
+		runs.message("steer-order", "later follow", false);
+		await settle();
+		runs.message("steer-order", "now steer", true);
+		await settle();
+		const ordered = runs.members.get("steer-order");
+		ok("a steer does not absorb a queued follow-up", ordered.pendingDelivery.length === 2 && ordered.pendingDelivery[0].mode === "followUp" && ordered.pendingDelivery[1].mode === "steer");
+		release();
+		await settle();
+		ok("the steer is injected alone at run start", prompts[1]?.text.includes("now steer") && !prompts[1]?.text.includes("later follow") && prompts[1]?.options?.streamingBehavior === "steer");
+		ok("the follow-up is still delivered after the run", prompts[2]?.text.includes("later follow") && ordered.pendingDelivery.length === 0);
+	}
+
+	// A refused steer injection re-holds the steer instead of losing it.
+	{
+		const listeners: Array<(event: any) => void> = [];
+		const emit = (event: any) => {
+			for (const l of listeners) l(event);
+		};
+		const prompts: string[] = [];
+		let release: () => void = () => {};
+		const session: any = {
+			subscribe: (listener: (event: any) => void) => {
+				listeners.push(listener);
+				return () => {};
+			},
+			async prompt(text: string, options?: any) {
+				prompts.push(text);
+				if (prompts.length === 1) {
+					options?.preflightResult?.("started");
+					await new Promise<void>((r) => (release = r));
+					emit({ type: "agent_start" });
+					emit({ type: "message_end", message: { role: "assistant", content: [], stopReason: "stop" } });
+					emit({ type: "agent_settled", aborted: false });
+					return;
+				}
+				throw new Error("cannot submit a prompt while compaction is in progress");
+			},
+			async abort() {},
+			dispose() {},
+		};
+		runs.members.set("steer-refused", { name: "steer-refused", agent: def("steer-refused"), spec, modelId: "p/sr", session, state: "unstarted", pendingDelivery: [], notices: [] });
+		runs.message("steer-refused", "go", false);
+		await settle();
+		runs.message("steer-refused", "keep me", true);
+		await settle();
+		const refused = runs.members.get("steer-refused");
+		const reportsBefore = readReports(runs.recordPath).length;
+		release();
+		await settle();
+		ok("a refused injection puts the steer back in the queue", refused.pendingDelivery.length === 1 && refused.pendingDelivery[0].mode === "steer" && refused.pendingDelivery[0].text.includes("keep me"));
+		ok("and the refusal is filed", readReports(runs.recordPath).length === reportsBefore + 1 && refused.note.includes("delivery failed"));
+	}
+
+	// A queued steer is part of what removal drops, and says so.
+	{
+		const listeners: Array<(event: any) => void> = [];
+		const session: any = {
+			subscribe: (listener: (event: any) => void) => {
+				listeners.push(listener);
+				return () => {};
+			},
+			async prompt() {
+				await new Promise<void>(() => {});
+			},
+			async abort() {},
+			dispose() {},
+		};
+		runs.members.set("steer-dropped", { name: "steer-dropped", agent: def("steer-dropped"), spec, modelId: "p/sd", session, state: "unstarted", pendingDelivery: [], notices: [] });
+		runs.message("steer-dropped", "go", false);
+		await settle();
+		runs.message("steer-dropped", "late steer", true);
+		await settle();
+		const removed = await runs.removeMember({ member: "steer-dropped", force: true, reason: "done" });
+		ok("removal reports the queued steer it drops", removed.ok && (removed.warnings ?? []).some((w: string) => w.includes("1 queued message")));
 	}
 
 	// A message sent while the first run is still preparing must queue, not

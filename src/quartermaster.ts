@@ -392,16 +392,22 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			"Send a message to one member of the convened team, with the engine's " +
 			"constitutional framing prefixed — your body is the only thing you wrote. " +
 			"The member does not have to be idle to receive it: pi can steer a running " +
-			"agent between its inputs. Set steer to interrupt the current run and steer " +
-			"it with your message; leave it false and the message queues as a follow-up " +
-			"for when the run finishes. A member that was convened without a task starts on its " +
+			"agent between its inputs. Set steer to queue your message into the run in flight — " +
+			"delivered before the member's next model call (and it starts a run if the member is idle); " +
+			"leave it false and the message waits as a follow-up for when the run finishes. A member that was convened without a task starts on its " +
 			"first message, which is its first input; steer is then the same as a normal message. All messages are logged to the record like " +
 			"mailbox traffic. Members are persistent: use this to guide step by step, " +
 			"relay results of approved actions, or correct course mid-flight.",
 		parameters: Type.Object({
 			member: Type.String({ description: "Team member name (from team_list)." }),
 			body: Type.String({ description: "The message body." }),
-			steer: Type.Optional(Type.Boolean({ description: "True: interrupt the member's current run and steer it. False (default): queue as a follow-up." })),
+			steer: Type.Optional(
+				Type.Boolean({
+					description:
+						"True: join the member's run in flight, delivered before its next model call (starts a run when the member is idle). " +
+						"False (default): queue as a follow-up for after the run.",
+				}),
+			),
 		}),
 		execute: async (_id, params: MessageInput, _sig, _up, ctx) => ackText(await getEngine(ctx).message(params)),
 	});

@@ -67,7 +67,11 @@ interface FleetMember {
 	 * Agent loops, not prompts: a retry or a drained follow-up starts another.
 	 */
 	runs?: number;
-	/** A prompt is in flight — dispatched, not yet settled (a run or its preparation). */
+	/**
+	 * A prompt is in flight — dispatched, not yet settled — or a run is being
+	 * prepared. Released when the SDK says no run of its own is coming, and
+	 * whenever a run settles.
+	 */
 	preparing?: boolean;
 	/** The last assistant message of the current run, from its own events. */
 	runAssistant?: Extract<AgentMessage, { role: "assistant" }>;
@@ -83,8 +87,13 @@ interface FleetMember {
 	placement?: Placement;
 	/** The worktree has been removed (or deliberately kept) and must not be handled again. */
 	treeReleased?: boolean;
-	/** Messages waiting for this member's current run to finish. */
-	pendingDelivery: Array<{ text: string }>;
+	/**
+	 * Messages waiting for this member's run. A "steer" is injected into the
+	 * run as soon as it starts (the run polls its steering queue as it begins,
+	 * so normally before its first model call); a "followUp" waits for the run
+	 * to settle.
+	 */
+	pendingDelivery: Array<{ text: string; mode?: "steer" | "followUp" }>;
 	/**
 	 * Channel changes since the member last heard from the engine, delivered
 	 * for free as a preface to its next incoming message (an unstarted member
@@ -498,11 +507,23 @@ export class Fleet {
 	private onSessionEvent(member: FleetMember, event: AgentSessionEvent): void {
 		if (member.state === "removed" || member.state === "dissolved") return;
 		switch (event.type) {
-			case "agent_start":
+			case "agent_start": {
 				member.runs = (member.runs ?? 0) + 1;
 				member.runAssistant = undefined;
 				member.state = "working";
+				// A steer held while the run was only being prepared goes in now:
+				// the run polls its steering queue as it starts, before its first
+				// model call unless an input hook makes the queueing slow.
+				const steers = member.pendingDelivery.filter((m) => m.mode === "steer");
+				if (steers.length > 0) {
+					member.pendingDelivery = member.pendingDelivery.filter((m) => m.mode !== "steer");
+					for (const steer of steers) {
+						// A refused injection re-holds the steer rather than losing it.
+						this.dispatch(member, "delivery", steer.text, "steer", () => member.pendingDelivery.unshift(steer));
+					}
+				}
 				return;
+			}
 			case "message_end":
 				// Only the last assistant message of the run matters; an earlier,
 				// recovered attempt is superseded by a later one.
@@ -593,10 +614,24 @@ export class Fleet {
 					streamingBehavior: behavior,
 					preflightResult: (disposition) => {
 						if (disposition !== "started") member.preparing = false;
+						if (disposition === "handled") this.heldSteersWithoutRun(member, what);
 					},
 				}),
 			restore,
 		);
+	}
+
+	/**
+	 * The input was consumed without starting a run (an extension command or an
+	 * input hook), so a steer held for that run has nothing to join. Say so and
+	 * leave it queued: the member's next run injects it.
+	 */
+	private heldSteersWithoutRun(member: FleetMember, what: string): void {
+		if (member.state === "removed" || member.state === "dissolved") return;
+		const held = member.pendingDelivery.filter((m) => m.mode === "steer").length;
+		if (held === 0) return;
+		member.note = `${what} started no run; ${held} held steer(s) wait for the member's next run`;
+		this.fileError(member, member.note);
 	}
 
 	/**
@@ -830,8 +865,8 @@ export class Fleet {
 
 	/**
 	 * Quartermaster-to-member delivery: the steer flag says whether the
-	 * message interrupts the member's current run (pi can steer a running
-	 * agent between its inputs) or queues as a follow-up.
+	 * message joins the run in flight (delivered before the member's next
+	 * model call) or queues as a follow-up for after the run.
 	 */
 	message(memberName: string, body: string, steer: boolean): { ok: boolean; message: string } {
 		const member = this.members.get(memberName);
@@ -885,31 +920,50 @@ export class Fleet {
 			? `CHANNEL CHANGES since you last heard from the Quartermaster:\n${notices.map((n) => `- ${n}`).join("\n")}\n\n`
 			: "";
 		const text = `${preface}${framing}\n${body}`;
-		const waiting = recipient.pendingDelivery.splice(0);
-		const outgoing = waiting.length > 0 ? [...waiting.map((m) => m.text), text].join("\n\n") : text;
-		// If the prompt is refused, those queued messages never landed either:
-		// put them back ahead of anything newer.
-		const restore = waiting.length > 0 ? () => recipient.pendingDelivery.unshift(...waiting) : undefined;
 
-		// A run — or the preparation before it starts — owns the session. A
-		// second plain prompt is refused by the SDK, so queue instead; a steer
-		// joins the run itself only once one is actually going.
-		if (recipient.preparing || recipient.state === "working" || recipient.state === "convening") {
-			if (behavior === "steer" && recipient.state === "working" && recipient.session) {
-				this.dispatch(recipient, "delivery", outgoing, "steer", restore);
+		// A steer never absorbs queued follow-ups and never waits behind them:
+		// it is explicitly overtaking them.
+		if (behavior === "steer") {
+			if (recipient.state === "working") {
+				// The run is active: the session queues it for the next model call.
+				this.dispatch(recipient, "delivery", text, "steer");
 				return;
 			}
-			recipient.pendingDelivery.push({ text: outgoing });
+			if (recipient.preparing || recipient.state === "convening") {
+				// The run is still being prepared (agent_start has not fired, so the
+				// state is not "working" yet). Hold the steer in the engine's queue:
+				// agent_start injects it, and a refused or abandoned run counts it as
+				// undelivered instead of stranding it in the SDK.
+				recipient.pendingDelivery.push({ text, mode: "steer" });
+				return;
+			}
+			if (recipient.state === "unstarted") {
+				// Nothing to steer yet: the first input starts the member.
+				this.startMember(recipient, text);
+				return;
+			}
+			// Idle or errored: the steer starts a run and is its first input.
+			this.dispatch(recipient, "delivery", text, "steer");
+			return;
+		}
+
+		// Follow-ups wait for the run to settle. Queued follow-ups go ahead of
+		// this one, in send order; a held steer is not a follow-up and stays put.
+		const waiting = recipient.pendingDelivery.filter((m) => m.mode !== "steer");
+		if (waiting.length > 0) recipient.pendingDelivery = recipient.pendingDelivery.filter((m) => m.mode === "steer");
+		const outgoing = waiting.length > 0 ? [...waiting.map((m) => m.text), text].join("\n\n") : text;
+		const restore = waiting.length > 0 ? () => recipient.pendingDelivery.unshift(...waiting) : undefined;
+		if (recipient.preparing || recipient.state === "working" || recipient.state === "convening") {
+			recipient.pendingDelivery.push({ text: outgoing, mode: "followUp" });
 			return;
 		}
 		if (recipient.state === "unstarted") {
-			// First input starts the member. There is nothing to steer, so
-			// steer and follow-up behave identically here.
+			// First input starts the member.
 			this.startMember(recipient, outgoing);
 			return;
 		}
 		// Idle or errored: a fresh run.
-		this.dispatch(recipient, "delivery", outgoing, behavior, restore);
+		this.dispatch(recipient, "delivery", outgoing, "followUp", restore);
 	}
 
 	private flushDeliveries(member: FleetMember): void {
@@ -1102,10 +1156,16 @@ export class Fleet {
 		member.removedAt = Date.now();
 		member.removedReason = input.reason;
 		const dropped = member.pendingDelivery.length;
+		const interruptedRun = busy;
 		member.pendingDelivery = [];
 		const warnings: string[] = [];
 		if (dropped > 0) {
 			warnings.push(`${dropped} queued message(s) to ${member.name} were dropped with it`);
+		}
+		if (interruptedRun) {
+			// A steer handed to the running agent lives in the SDK's queue until
+			// the next poll; killing the run takes it with it.
+			warnings.push(`${member.name}'s run or its start was interrupted, including any steering already queued to it`);
 		}
 		if (session) {
 			try {
@@ -1318,6 +1378,9 @@ export class Fleet {
 		const warnings: string[] = [];
 		for (const member of this.members.values()) {
 			if (member.state === "removed") continue;
+			if (member.pendingDelivery.length > 0) {
+				warnings.push(`${member.pendingDelivery.length} queued message(s) to ${member.name} were dropped with the team`);
+			}
 			if (member.session) {
 				try {
 					member.session.dispose();

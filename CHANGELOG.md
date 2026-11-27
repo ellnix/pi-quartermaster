@@ -37,6 +37,14 @@
   you hear what it skipped.
 
 ### Fixed
+- Steering no longer errors with the SDK's "Agent is already processing"
+  refusal. A steer to a member whose run is in flight is queued into that
+  run's steering queue and delivered at its next model call; a steer that
+  arrives while the run is still being prepared is held in the engine's
+  queue and injected as the run starts (so a refused or abandoned run
+  counts it as undelivered); a steer to an idle member starts a run.
+  Follow-ups keep their own queue, delivered after the run settles, and a
+  steer never absorbs them.
 - A failed `add_member` lost the reason along with the member: the team
   was left unchanged, but the note vanished with the dropped crewman.
   The rejection reason now rides on the result's warnings, so a spec-less

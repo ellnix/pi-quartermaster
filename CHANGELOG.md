@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 ### Added
+- A run that stops on an unrecoverable error now changes the member's
+  status to `error` and files an engine report (`status: "error"`) with
+  the message, so the wake digest notifies the quartermaster instead of
+  the member quietly going idle. `team_list` shows the state and the
+  note; the quartermaster can wake the member with `message_member`
+  (a good run returns it to `idle`), `remove_member`, or do nothing.
+  Aborted runs and tool errors the agent recovered from are not errors.
+  The fleet follows the session's own run events (`agent_start`,
+  `message_end`, `agent_settled`) and reads the run's last assistant
+  message: `prompt()` resolves without starting a run when it is queued
+  into a busy session or deferred while one settles, so its promise is
+  not the signal, and compaction cannot move an event.
+  Errors have their own wake switch (`wake.errors`, default immediate),
+  independent of `wake.reports`, and arrive in their own digest section.
+  Messages queued while a member was working are delivered ahead of the
+  next wake-up message, in the order they were sent, and a message that
+  arrives while a run is still being prepared is queued behind it instead
+  of racing the session into refusing it (every dispatched prompt carries
+  a `streamingBehavior`, so the session queues a surprise instead of
+  throwing it away).
 - A convene member or `add_member` can name an explicit `model` (a
   physical `provider/model-id`). It pins that model for the deployment:
   the spec draw is skipped, and it wins over the agent file's own
@@ -26,10 +46,12 @@
   refuses and says why, instead of reporting evidence that never landed.
   A bare model pin, or an explicit model without a spec, has nowhere to
   be rated.
-- `rate_member` also refused a member that never resolved a usable model
+- `rate_member` also refuses a member that never resolved a usable model
   (a failed convene, a bad explicit model): rating it wrote evidence
   against a model id that may not exist. The rating resolver carries the
-  member's state, and the engine refuses with the member's own note.
+  member's state, and the engine refuses with the member's own note. A
+  member whose *run* stopped on an error is a real outcome and stays
+  ratable; only one that never started is refused.
 - A member that failed during convene no longer counts as an active
   channel endpoint. A mailbox wired to or from it does not open, and the
   convene warnings say the channel will not open instead of leaving the

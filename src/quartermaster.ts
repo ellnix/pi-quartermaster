@@ -227,7 +227,7 @@ export default function quartermaster(pi: ExtensionAPI): void {
 		const heading = theme.fg("accent", "[wake]");
 		let body = `${heading} ${message.content}`;
 		if (expanded && details) {
-			body += `\n${theme.fg("dim", `${details.reports.length} report(s), ${details.asks.length} ask(s) — ${details.recordPath}`)}`;
+			body += `\n${theme.fg("dim", `${details.reports.length} report(s), ${details.errors.length} error(s), ${details.asks.length} ask(s) — ${details.recordPath}`)}`;
 		}
 		const box = new Box(outputPad, 1, (text) => theme.bg("customMessageBg", text));
 		box.addChild(new Text(body, 0, 0));

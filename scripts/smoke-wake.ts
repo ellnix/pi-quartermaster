@@ -8,7 +8,7 @@
  * one debounced digest notice each burst, the digest carries ids and one-line
  * summaries rather than payloads, channel traffic produces nothing at all,
  * the delivery invocation is the follow-up shape that never steers, and the
- * policy switches (reports/asks off) restore pull-only behavior. Exits
+ * policy switches (reports/errors/asks off) restore pull-only behavior. Exits
  * non-zero on any failed assertion — a watcher that silently stops watching
  * is worse than no watcher, because the quartermaster believes it is woken.
  */
@@ -16,8 +16,9 @@
 process.env.PI_CODING_AGENT_DIR ??= "/tmp/qm-wake-agent-dir";
 
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
-import { DEFAULT_WAKE, type WakePolicy } from "../src/config/authority.ts";
+import { DEFAULT_WAKE, loadAuthority, type WakePolicy } from "../src/config/authority.ts";
 import { recordDir } from "../src/config/paths.ts";
 import { appendAsk, appendChannel, appendReport, appendResolution, ensureRecord } from "../src/fleet/record.ts";
 import { WAKE_CUSTOM_TYPE, WakeWatcher, syncWake, wakeMessage, type WakeNotice } from "../src/fleet/wake.ts";
@@ -124,6 +125,24 @@ async function main(): Promise<void> {
 	await sleep(300);
 	check("an ask resolution produces no wake", notices.length === 1, `${notices.length} notice(s)`);
 
+	// --- An engine-filed error is a report like any other: it wakes, carrying
+	// its status and the message, so a member that stopped on an error is not
+	// discovered by accident (#40).
+	const failure = appendReport(recordA, {
+		ts: Date.now(),
+		member: "builder",
+		status: "error",
+		summary: "run stopped on an error: provider 500: upstream connection reset",
+	});
+	const errorWoke = await waitFor(() => notices.length === 2);
+	const errorText = notices[1]?.text ?? "";
+	check("an engine-filed error report wakes the quartermaster", errorWoke && notices.length === 2, `${notices.length} notice(s)`);
+	check(
+		"the error digest carries its status and the message",
+		errorText.includes(failure.id) && errorText.includes("(error,") && errorText.includes("provider 500"),
+		errorText.split("\n").find((l) => l.includes(failure.id)) ?? "",
+	);
+
 	// --- Delivery shape: a custom message, follow-up delivery, never a steer,
 	// never a user message.
 	const { message: wireMessage, options } = wakeMessage(first);
@@ -138,31 +157,41 @@ async function main(): Promise<void> {
 	const recordB = recordDir("t-wake-b");
 	ensureRecord(recordB);
 	const offCollect = collect();
-	const offWatcher = new WakeWatcher({ reports: "off", asks: "immediate", debounceMs: FAST.debounceMs }, offCollect.emit);
-	offWatcher.watch(recordB, { reports: "off", asks: "immediate", debounceMs: FAST.debounceMs });
+	const offWatcher = new WakeWatcher({ reports: "off", errors: "immediate", asks: "immediate", debounceMs: FAST.debounceMs }, offCollect.emit);
+	offWatcher.watch(recordB, { reports: "off", errors: "immediate", asks: "immediate", debounceMs: FAST.debounceMs });
 
 	const ignored = appendReport(recordB, { ts: Date.now(), member: "builder", status: "complete", summary: "while reports are off" });
 	await sleep(300);
 	check("reports off means exactly the pull-only behavior (no wake)", offCollect.notices.length === 0, `${offCollect.notices.length} notice(s)`);
 
-	appendAsk(recordB, { id: "ask-b", ts: Date.now(), member: "reviewer", tool: "edit", args: "src/x.ts", why: "fix" });
-	const askWoke = await waitFor(() => offCollect.notices.length === 1);
+	// Errors have their own switch: turning reports off must not silence the
+	// one report that usually needs a decision (#40).
+	appendReport(recordB, { ts: Date.now(), member: "builder", status: "error", summary: "run stopped on an error: provider offline" });
+	const offErrorWoke = await waitFor(() => offCollect.notices.length === 1);
 	check(
-		"asks still wake while reports are off",
-		askWoke && offCollect.notices[0]!.details.asks.length === 1 && offCollect.notices[0]!.details.reports.length === 0,
+		"an error wakes even while reports are off, in its own section",
+		offErrorWoke && offCollect.notices[0]!.details.errors.length === 1 && offCollect.notices[0]!.details.reports.length === 0 && offCollect.notices[0]!.text.includes("ERRORS"),
 		offCollect.notices[0]?.text.split("\n")[0] ?? "",
 	);
 
+	appendAsk(recordB, { id: "ask-b", ts: Date.now(), member: "reviewer", tool: "edit", args: "src/x.ts", why: "fix" });
+	const askWoke = await waitFor(() => offCollect.notices.length === 2);
+	check(
+		"asks still wake while reports are off",
+		askWoke && offCollect.notices[1]!.details.asks.length === 1 && offCollect.notices[1]!.details.reports.length === 0,
+		offCollect.notices[1]?.text.split("\n")[0] ?? "",
+	);
+
 	// Reports back on: the ignored report must not be replayed.
-	offWatcher.watch(recordB, { reports: "immediate", asks: "immediate", debounceMs: FAST.debounceMs });
+	offWatcher.watch(recordB, { reports: "immediate", errors: "immediate", asks: "immediate", debounceMs: FAST.debounceMs });
 	await sleep(150);
-	check("re-enabling reports does not replay the ignored backlog", offCollect.notices.length === 1, `${offCollect.notices.length} notice(s)`);
+	check("re-enabling reports does not replay the ignored backlog", offCollect.notices.length === 2, `${offCollect.notices.length} notice(s)`);
 	const fresh = appendReport(recordB, { ts: Date.now(), member: "builder", status: "complete", summary: "after reports came back" });
-	const freshWoke = await waitFor(() => offCollect.notices.length === 2);
+	const freshWoke = await waitFor(() => offCollect.notices.length === 3);
 	check(
 		"a report after re-enabling wakes, and only that one",
-		freshWoke && offCollect.notices[1]!.details.reports.length === 1 && offCollect.notices[1]!.details.reports[0]!.id === fresh.id,
-		offCollect.notices[1]?.details.reports.map((r) => r.id).join(", ") ?? "",
+		freshWoke && offCollect.notices[2]!.details.reports.length === 1 && offCollect.notices[2]!.details.reports[0]!.id === fresh.id,
+		offCollect.notices[2]?.details.reports.map((r) => r.id).join(", ") ?? "",
 	);
 
 	// --- Retargeting: the previous record goes quiet, the new one is watched.
@@ -189,11 +218,11 @@ async function main(): Promise<void> {
 	// --- A corrupt-but-complete line is loud, not silent.
 	appendAsk(recordB, { id: "ask-c", ts: Date.now(), member: "reviewer", tool: "read", args: "src/y.ts", why: "look" });
 	fs.appendFileSync(path.join(recordB, "reports.jsonl"), "{not json\n");
-	const corruptWoke = await waitFor(() => offCollect.notices.length === 3);
+	const corruptWoke = await waitFor(() => offCollect.notices.length === 4);
 	check(
 		"an unreadable record line is reported in the digest",
-		corruptWoke && offCollect.notices[2]!.text.includes("unreadable line(s)"),
-		offCollect.notices[2]?.text.split("\n").at(-1) ?? "",
+		corruptWoke && offCollect.notices[3]!.text.includes("unreadable line(s)"),
+		offCollect.notices[3]?.text.split("\n").at(-1) ?? "",
 	);
 
 	// --- A worker append must never be digested as a report.
@@ -205,7 +234,7 @@ async function main(): Promise<void> {
 		body: "another channel body",
 	});
 	await sleep(300);
-	check("channel traffic alone never wakes", offCollect.notices.length === 3, `${offCollect.notices.length} notice(s)`);
+	check("channel traffic alone never wakes", offCollect.notices.length === 4, `${offCollect.notices.length} notice(s)`);
 
 	// --- The sweep backstop: a drain that ignores the event stream. A null
 	// filename (Node's "not available") or a dropped event must not strand an
@@ -226,6 +255,37 @@ async function main(): Promise<void> {
 	watcher.stop();
 	offWatcher.stop();
 	check("stopping closes the watch", !watcher.watching && !offWatcher.watching);
+
+	// --- The policy parses its switch for engine errors, independently.
+	{
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qm-wake-policy-"));
+		const previous = process.env.PI_CODING_AGENT_DIR;
+		try {
+			process.env.PI_CODING_AGENT_DIR = dir;
+			fs.mkdirSync(path.join(dir, "team"), { recursive: true });
+			const write = (wake: unknown) =>
+				fs.writeFileSync(path.join(dir, "team", "authority.jsonc"), JSON.stringify({ autoApprove: ["read"], escalate: ["write"], wake }));
+			write({ errors: "off", reports: "off" });
+			const parsed = loadAuthority([]);
+			check(
+				"wake.errors parses from authority.jsonc, independently",
+				parsed.wake.errors === "off" && parsed.wake.reports === "off" && parsed.wake.asks === "immediate",
+				JSON.stringify(parsed.wake),
+			);
+			write({ errors: "nope" });
+			const warnings: Array<{ file: string; message: string }> = [];
+			const fallback = loadAuthority(warnings);
+			check(
+				"a malformed wake.errors warns and falls back to immediate",
+				fallback.wake.errors === "immediate" && warnings.some((w) => w.message.includes("wake.errors")),
+				warnings.map((w) => w.message).join("; "),
+			);
+		} finally {
+			if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previous;
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	}
 
 	// --- The wiring the extension actually uses: a null source parks the
 	// watcher, a live source points it at that record.

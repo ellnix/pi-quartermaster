@@ -194,6 +194,10 @@ export interface MemberStatus {
 	 * A union of string literals rather than an enum: the TypeScript
 	 * idiom. It is compile-time-checked everywhere the value is read or
 	 * written, serializes as plain strings, and adds no runtime object.
+	 *
+	 * `error`: the spawn failed or a run stopped on an unrecoverable error —
+	 * `note` carries the reason, an engine report was filed, and a message
+	 * may wake the member again.
 	 */
 	state: "convening" | "unstarted" | "working" | "idle" | "removed" | "dissolved" | "error";
 	note?: string;

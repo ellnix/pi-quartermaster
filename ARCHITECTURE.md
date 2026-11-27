@@ -327,6 +327,22 @@ anthropic/claude-opus-4-8:
 
 - Outcome-relevant material flows to the quartermaster: task reports,
   permission asks, digests on request. This keeps the ratings loop fed.
+  An **unrecoverable run error** is outcome-relevant too: `AgentSession`
+  `prompt()` resolves even when a run stops on an error (pi records the
+  failure as the run's last assistant message — `stopReason: "error"`
+  plus `errorMessage`), and it also resolves without starting a run at
+  all when the input is queued into a busy session or deferred while one
+  settles. So the fleet follows the session's own events — `agent_start`,
+  `message_end`, `agent_settled` — and reads the run's last assistant
+  message, which compaction cannot move out from under it. On an error it
+  flips the member to `error` and appends an engine report with status
+  `error` and the message. That is the notification: the ordinary wake
+  path carries it, `team_list` shows the state and note, and the
+  quartermaster can wake the member with a message, remove it, or do
+  nothing. Aborted runs (removal, dissolve) and tool errors the agent
+  recovered from are not reported. A spawn or session-start failure files
+  no report: it never ran, and the convene or add_member result already
+  says so synchronously.
 - Clarification traffic flows through sanctioned mailboxes: prose
   between agents, off the quartermaster's context bus.
 
@@ -339,7 +355,9 @@ anthropic/claude-opus-4-8:
   member, status and one summary line; an ask contributes its id, member
   and the requested action, plus pointers to `pending_asks` /
   `resolve_ask` and `read_channel "reports"`. The record stays the
-  blackboard.
+  blackboard. Engine-filed `error` reports get their own `ERRORS` section
+  with the three ways out (wake, remove, leave), so a stopped member is
+  not buried in routine progress.
 - Delivery is a custom message (`customType: "quartermaster-wake"`, with
   a registered TUI renderer) sent with `triggerTurn: true` and
   `deliverAs: "followUp"`: it starts a turn when the quartermaster is
@@ -360,9 +378,11 @@ anthropic/claude-opus-4-8:
   replay the backlog. A newline-terminated line that will not parse is
   counted and reported in the next digest rather than dropped silently.
 - Policy lives in `authority.jsonc`'s optional `wake` section —
-  `reports` and `asks` are `"immediate"` or `"off"`, plus `debounceMs`
-  (default 2000). Turning both off is exactly the 0.1.0 pull-only
-  protocol.
+  `reports`, `errors` and `asks` are `"immediate"` or `"off"`, plus
+  `debounceMs` (default 2000) — and the three switches are independent:
+  an errors-off policy silences the most decision-shaped news there is,
+  so it is its own choice. Turning all three off is exactly the 0.1.0
+  pull-only protocol.
 
 - Idle child + mailbox message → the extension (RPC client) queues a
   prompt; the child's loop runs; its reply routes into the target
@@ -404,7 +424,7 @@ Quartermaster-facing (the interactive session):
 |---|---|
 | `convene` | form a team: draw a model per member (once) or pin one per member, spawn persistent RPC children, define mailboxes |
 | `team list` | members, live status, their descriptions and recommended use |
-| `read-channel` / `digest` | inspect mailbox traffic and reports on demand; reports and asks also arrive as debounced wake digests |
+| `read-channel` / `digest` | inspect mailbox traffic and reports on demand; reports, engine errors and asks also arrive as debounced wake digests |
 | `rate` | outcome-shaped rating → evidence store, at return-time |
 | `set-cost` / `set-override` | durable facts → models.yaml |
 | `dissolve` | end the session; collect reports; children exit |

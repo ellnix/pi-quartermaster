@@ -122,8 +122,8 @@ The user's answers, not defaults, decide the team.
 6. **Optionally write `team/authority.jsonc`** — which tool categories
    the quartermaster may approve alone versus which always escalate, plus
    the optional `matching` section (`costLambda`, default 0.15; `priorStrength`, default 6) and
-   `wake` section (`reports` / `asks` as `"immediate"` or `"off"`,
-   `debounceMs`).
+   `wake` section (`reports` / `errors` / `asks` as `"immediate"` or
+   `"off"`, `debounceMs`).
    The defaults are conservative; only loosen them on the user's
    explicit instruction.
 7. **Validate.** Re-run the smoke check. Every warning is a real defect

@@ -306,9 +306,47 @@ with the member's name and an honest 0-1 outcome — the member's spec
 resolves the drawn model and its dimensions, so you never track who
 runs on what. One bad day should move a model a little; say what
 happened in the note. Before dissolving, rate every member — a
-dissolution without ratings wastes the session's evidence. When the
-user says a reviewer was bad, that is a rating; when they say their
-subscription changed, that is `set_cost`.
+dissolution without ratings wastes the session's evidence.
+
+**Rate against the bands, not against the member's peers.** The bands
+are the same for everyone, so two ratings of the same work agree:
+
+| outcome | the band |
+| --- | --- |
+| `[0, 0.4)` | **less than competent** — failed the task, ignored a stated boundary, broke something, or needed repeated correction |
+| `[0.4, 0.6)` | **satisfactory** — completed the task to the letter |
+| `[0.6, 0.8)` | **beyond the task** — understood more than the task itself and took care of adjacent issues |
+| `[0.8, 1]` | **outstanding** — the work would be significantly worse without its unique, non-obvious contribution |
+
+The bands are half-open on the upper bound: 0.6 is already *beyond the
+task*, not *satisfactory*.
+
+Calibration matters, because the failure this guards against is everything
+drifting to 0.8+: that tells the matcher every model is excellent, the
+evidence stops separating them, and the draw stops improving.
+
+- **A clean run that did exactly what it was told is around 0.5.** That
+  is a good rating, not a faint one: the task was done.
+- **0.6 up to 0.8 needs something you did not ask for** — an adjacent bug
+  found, a flaw in the task itself, a better approach, a test the task
+  implied but did not name — and ideally said so in the report.
+- **0.8 and above needs a specific contribution** the implementation
+  would miss without. `rate_member` refuses 0.8+ with no `note`: name the
+  contribution, not adjectives ("found the settle-window race that would
+  have double-dispatched", not "great work").
+- **Down-rate without ceremony.** A run you had to correct three times is
+  below 0.4; so is a member that ignored the boundary, broke the build, or
+  reported something untrue. Down-scored models still draw occasionally —
+  that is the recovery path, so a bad rating is not a punishment.
+- **Rate what the model did, not how the outcome landed.** A well-reasoned
+  "this task is wrong" is worth more than a diff that merged by luck; an
+  infrastructure outage is not model quality (rate only what the model
+  did — see error reports).
+- **The note is the record.** One clause that says what happened; "good"
+  tells you nothing when you reread the record next month.
+
+When the user says a reviewer was bad, that is a rating; when they say
+their subscription changed, that is `set_cost`.
 
 ## Ending
 

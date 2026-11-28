@@ -300,11 +300,21 @@ anthropic/claude-opus-4-8:
   prior fades as real evidence accrues. Dimensions the user never scored
   start at Beta(1,1). Stored counts keep the Beta(1,1) baseline and the
   prior is swapped in at read time, so old evidence needs no migration.
-- **Ratings are outcome-shaped.** `team rate` takes a 0–1 outcome per
-  (model, dimension) and updates a posterior. One bad day moves a model
-  a little; a pattern moves it a lot; temperature keeps drawing down-
-  scored models occasionally — the recovery path for wrongly-down-scored
-  models is built in.
+- **Ratings are outcome-shaped, and banded.** `team rate` takes a 0–1
+  outcome per (model, dimension) and updates a posterior. The bands are
+  defined once in `src/matching/rating.ts` — `[0, 0.4)` less than
+  competent, `[0.4, 0.6)` satisfactory (the task to the letter),
+  `[0.6, 0.8)` beyond the task, `[0.8, 1]` outstanding — and the
+  `rate_member` tool renders its text from that table. Without bands
+  every rating drifts upward, and an evidence store where all models look
+  excellent cannot separate them; bands alone do not stop the drift, but
+  they make two ratings of the same work comparable, and the engine
+  refuses a 0.8+ rating with no note naming the contribution it pays
+  for. How good a note is stays the quartermaster's judgment: the check
+  is that a top-band claim is justified at all, not that it is true.
+  One bad day moves a model a little; a pattern moves it a lot;
+  temperature keeps drawing down-scored models occasionally — the
+  recovery path for wrongly-down-scored models is built in.
 - **Facts are config-shaped.** `team set-cost` / `team set-override`
   write durable truths to `overrides.yaml` — machine-owned, with
   provenance comments ("5× cheaper subscription, 2026-11"). The human-owned

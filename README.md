@@ -56,7 +56,7 @@ surface:
 | `worktrees` | list or prune the git worktrees members work in |
 | `read_channel` | mailbox traffic or reports, on demand — plain JSONL, analyze freely |
 | `message_member` | quartermaster-to-member guidance; `steer` interrupts mid-run |
-| `rate_member` | outcome rating by member → weighted evidence (rate at return-time) |
+| `rate_member` | outcome rating by member → weighted evidence (rate at return-time, in bands; 0.8+ needs a note) |
 | `set_cost` / `set_override` | durable facts with provenance |
 | `pending_asks` / `resolve_ask` | permission asks; escalate-only needs the user's words |
 | `dissolve_team` | collect, dispose, keep the record |

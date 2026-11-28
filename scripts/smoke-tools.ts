@@ -8,6 +8,7 @@
  */
 
 import quartermaster from "../src/quartermaster.ts";
+import { RATING_BANDS } from "../src/matching/rating.ts";
 
 const tools = new Map<string, any>();
 const pi: any = {
@@ -44,6 +45,17 @@ const checks: Array<[string, boolean]> = [
 	["a convene member can name an explicit model", member?.model?.type === "string"],
 	["add_member can name an explicit model", added?.model?.type === "string"],
 	["the field says it skips the draw", /skips the spec draw/.test(member?.model?.description ?? "")],
+	[
+		"the rating tool states the bands",
+		/below 0\.4/.test(tools.get("rate_member")?.description ?? "") &&
+			/\[0\.8, 1\] outstanding/.test(tools.get("rate_member")?.description ?? ""),
+	],
+	["the rating tool prices the top band at a note", /refused without/.test(tools.get("rate_member")?.description ?? "")],
+	["the rating tool names a competent run's band", /around 0\.5/.test(tools.get("rate_member")?.description ?? "")],
+	[
+		"the rating tool renders every band from the standard",
+		RATING_BANDS.every((band) => (tools.get("rate_member")?.description ?? "").includes(band.name)),
+	],
 ];
 
 for (const [label, ok] of checks) console.log(`  ${label}: ${ok ? "ok" : "WRONG"}`);

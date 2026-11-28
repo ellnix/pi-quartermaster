@@ -31,6 +31,7 @@ import { composeEngine } from "./compose-engine.ts";
 import { loadConfig, type QuartermasterConfig } from "./config/index.ts";
 import { loadEvidence, recordOutcome, type EvidenceStore } from "./matching/evidence.ts";
 import { loadOverrides, setCostOverride, setScoreOverride, type Overrides } from "./matching/overrides.ts";
+import { outcomeBand, ratingProblem } from "./matching/rating.ts";
 import { Fleet } from "./fleet/fleet.ts";
 import { appendResolution, classifyForDisplay, pendingAsks, readChannelLog, readReports } from "./fleet/record.ts";
 import { classifyAsk } from "./config/authority.ts";
@@ -219,13 +220,19 @@ export function createEngine(ctx: ExtensionToolContext): QuartermasterEngine {
 					message: `${input.member} was not rated: its agent names no spec dimensions, so there is nothing to update ${resolution.modelId} on (a bare model pin or an explicit model without a spec cannot be rated)`,
 				};
 			}
+			// A rating is a measurement: the standard bands it, and the top band
+			// has to name the contribution it is paying for.
 			const outcome = clamp01(input.outcome);
+			const problem = ratingProblem(outcome, input.note);
+			if (problem) {
+				return { ok: false, message: `${input.member} was not rated: ${problem}` };
+			}
 			for (const { dimension, weight } of resolution.dimensions) {
 				recordOutcome(state.evidence, resolution.modelId, dimension, outcome, input.note, weight);
 			}
 			return {
 				ok: true,
-				message: `rated ${input.member} = ${outcome}${input.note ? ` (${input.note})` : ""}; evidence updated on ${resolution.modelId} for ${resolution.dimensions.map((d) => d.dimension).join(", ")}`,
+				message: `rated ${input.member} = ${outcome} (${outcomeBand(outcome).name})${input.note ? ` — ${input.note}` : ""}; evidence updated on ${resolution.modelId} for ${resolution.dimensions.map((d) => d.dimension).join(", ")}`,
 				// An outage is not a model quality signal. Still ratable — the
 				// quartermaster may know the failure was the model's — but not silently.
 				...(resolution.state === "error"

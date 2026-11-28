@@ -15,6 +15,7 @@ import * as fs from "node:fs";
 import { DEFAULT_MATCHING } from "../src/config/authority.ts";
 import { evidenceMean, evidenceSample, loadEvidence, recordOutcome } from "../src/matching/evidence.ts";
 import { costPenalty } from "../src/matching/matcher.ts";
+import { bandRange, outcomeBand, ratingProblem } from "../src/matching/rating.ts";
 
 fs.rmSync(process.env.PI_CODING_AGENT_DIR, { recursive: true, force: true });
 
@@ -198,6 +199,26 @@ check("k=1 at score 0.5 reproduces Beta(1,1)", evidenceMean(store, "fresh/model"
 	for (let i = 0; i < DRAWS; i++) sum += evidenceSample(st, "s/model", "dim", { score: 0.75, strength: k }) ?? 0;
 	check("anchored Beta sample mean matches the anchored posterior mean", sum / DRAWS, target, 0.01);
 }
+
+// --- Rating bands: the standard is a function, not a vibe.
+function truth(name: string, got: boolean): void {
+	console.log(`${got ? "ok  " : "FAIL"} ${name}`);
+	if (!got) failures += 1;
+}
+truth("0.2 is less than competent", outcomeBand(0.2).name === "less than competent");
+truth("0.5 is satisfactory", outcomeBand(0.5).name === "satisfactory");
+truth("0.65 is beyond the task", outcomeBand(0.65).name === "beyond the task");
+truth("0.8 and 1 are outstanding", outcomeBand(0.8).name === "outstanding" && outcomeBand(1).name === "outstanding");
+truth("0.4 and 0.6 belong to the higher band", outcomeBand(0.4).name === "satisfactory" && outcomeBand(0.6).name === "beyond the task");
+truth(
+	"band ranges render half-open like the docs",
+	bandRange(0) === "below 0.4" && bandRange(1) === "[0.4, 0.6)" && bandRange(2) === "[0.6, 0.8)" && bandRange(3) === "[0.8, 1]",
+);
+truth("out-of-range outcomes clamp into the bands", outcomeBand(-1).name === "less than competent" && outcomeBand(2).name === "outstanding");
+truth("below 0.8 needs no note", ratingProblem(0.79) === undefined);
+truth("0.8 without a note is refused", ratingProblem(0.8) !== undefined && ratingProblem(0.8, "   ") !== undefined);
+truth("0.8 with a note is recorded", ratingProblem(0.8, "caught the settle-window race") === undefined);
+truth("NaN is refused, never banded", ratingProblem(NaN) !== undefined && ratingProblem(NaN, "a note") !== undefined);
 
 if (failures > 0) {
 	console.error(`\n${failures} assertion(s) failed`);

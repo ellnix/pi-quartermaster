@@ -18,6 +18,7 @@ import { Box, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { createEngine } from "./create-engine.ts";
 import { DEFAULT_WAKE } from "./config/authority.ts";
+import { RATING_BANDS, bandRange } from "./matching/rating.ts";
 import {
 	WAKE_CUSTOM_TYPE,
 	WakeWatcher,
@@ -313,7 +314,11 @@ export default function quartermaster(pi: ExtensionAPI): void {
 		label: "Rate member outcome",
 		description:
 			"Rate a member's outcome at return-time, when your judgment is freshest. " +
-			"outcome is 0 to 1 — a bad review means the member's model was bad at what " +
+			"outcome is 0 to 1, banded so the same work lands in the same place (bands are half-open: " +
+			"the upper bound belongs to the next band): " +
+			RATING_BANDS.map((band, i) => `${bandRange(i)} ${band.name} — ${band.criterion}`).join("; ") +
+			". A clean, competent run is around 0.5, and most ratings should land there; a rating of 0.8 or more " +
+			"must name the contribution it pays for in `note`, and is refused without one. A bad review means the member's model was bad at what " +
 			"the member was convened to do. You never track models or dimensions: the " +
 			"member's spec says what its model was for — drawn, pinned, or named at " +
 			"convene — and the evidence updates that model on the spec's dimensions. " +
@@ -321,7 +326,10 @@ export default function quartermaster(pi: ExtensionAPI): void {
 			"dimensions, is refused rather than rated into nothing. One bad day moves a model a little; a " +
 			"pattern moves it a lot; down-scored models still draw occasionally — that " +
 			"is the recovery path.",
-		promptGuidelines: ["Rate each member at return-time; rate every member before dissolving."],
+		promptGuidelines: [
+			"Rate each member at return-time; rate every member before dissolving.",
+			"Rate against the bands, not against the member's peers: a competent run that did only what it was told is around 0.5, and 0.8+ needs a note saying what it did beyond the task.",
+		],
 		parameters: Type.Object({
 			member: Type.String({ description: "Team member name (from team_list)." }),
 			outcome: Type.Number({ minimum: 0, maximum: 1, description: "Outcome quality, 0 to 1." }),

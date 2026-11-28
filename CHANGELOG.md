@@ -49,6 +49,22 @@
   receipt reflects that decision at send time: a prompt an extension or
   input hook consumes before it runs does not update it.
 
+### Changed
+- Ratings are banded, and the quartermaster is held to the bands:
+  `[0, 0.4)` less than competent, `[0.4, 0.6)` satisfactory (the task to
+  the letter), `[0.6, 0.8)` beyond the task, `[0.8, 1]` outstanding
+  (half-open: 0.6 is already "beyond the task"). A competent run that did
+  only what it was told is around 0.5; 0.8 and above means the work would
+  be significantly worse without a unique, non-obvious contribution, and
+  `rate_member` refuses such a rating with no `note` naming it.
+  The standard is defined once in `src/matching/rating.ts`, the
+  `rate_member` tool renders its bands from that table, and the teamwork
+  skill, ARCHITECTURE and README restate the same bands. The
+  acknowledgement names the band. This makes ratings comparable and the
+  top band costly; it does not by itself stop upward drift, which still
+  rests on the quartermaster rating against the band instead of against
+  the member's peers.
+
 ### Fixed
 - Steering no longer errors with the SDK's "Agent is already processing"
   refusal. A steer to a member whose run is in flight is queued into that

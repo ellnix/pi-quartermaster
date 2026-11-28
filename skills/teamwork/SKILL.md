@@ -214,6 +214,7 @@ same arguments to `add_member`, then `open_mailbox` to wire it in.
 | Convene a pair with no mailboxes | Findings never reach whoever must fix them |
 | Skip the ratings | Evidence is lost and the next draw is uninformed (see Ratings) |
 | Dissolve and reconvene to add one specialist | Every draw is lost; use `add_member` |
+| `sleep`, or re-reading `read_channel` in a loop, waiting for a report | Reports arrive as wakes unless `wake.reports` is off; end the turn and let the digest land (see *While the team works*) |
 
 ## Working trees
 
@@ -266,7 +267,9 @@ user's tree.
   so you hear about a blocked member or a finished task without a user
   ping — treat a digest as a pointer into the record, not as the report.
   A wake lands as a follow-up: never mid-turn, so you are never steered
-  by it.
+  by it. End your turn and let it arrive: a report lands when the member
+  files it, so `sleep` and repeated `read_channel` polls only burn
+  wall-clock.
 - **Members cite tracking numbers**: reports are `r1, r2, ...`, messages
   `m1, m2, ...`. Steer by reference — "regarding r3, do X instead" —
   rather than re-describing.

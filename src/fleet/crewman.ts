@@ -17,8 +17,9 @@ export interface CrewHooks {
 	/**
 	 * Validate and route a mailbox send. A string refusal is returned to the
 	 * sender verbatim; a receipt confirms the send and its tracking number.
+	 * `steer` asks for the message to join the recipient's run in flight.
 	 */
-	onSend: (mailbox: string, body: string) => string | SendReceipt;
+	onSend: (mailbox: string, body: string, steer?: boolean) => string | SendReceipt;
 	/**
 	 * Register a permission ask and await its resolution. Resolves to a
 	 * verdict; a rejected promise is a failed ask, not a denial.
@@ -52,9 +53,27 @@ export interface ReportEntry {
 	worktree?: string;
 }
 
+/**
+ * How a message actually left the engine. The sender's receipt says which one
+ * it got, instead of promising a delivery the engine did not make.
+ */
+export type DeliveryDisposition =
+	/** The recipient was idle or stopped: this message started a run. */
+	| "started"
+	/** Queued into the run in flight; delivered at its next model call. */
+	| "steered"
+	/** Held for a run that is still being prepared; injected as it starts. */
+	| "held"
+	/** Waited behind the run; delivered when the recipient is idle. */
+	| "queued"
+	/** No session to deliver to (a spawn that failed). */
+	| "undeliverable";
+
 export interface SendReceipt {
 	/** The message's tracking number. */
 	id: string;
+	/** What the engine did with it: see DeliveryDisposition. */
+	delivery: DeliveryDisposition;
 	/** The recipient's mailbox back to the sender, when it has one. Without it no reply can arrive. */
 	replyChannel?: string;
 }
@@ -154,7 +173,11 @@ export function crewmanTools(memberName: string, recordPath: string, hooks: Crew
 				"directly to your crewmates lightens the Quartermaster's load, so prefer this " +
 				"to guessing or routing a question through a report. The recipient already " +
 				"knows who you are and is ready to accept your message - do not introduce " +
-				"yourself, just say what you need. The engine frames and logs the delivery, " +
+				"yourself, just say what you need. By default a message waits until the " +
+				"recipient is idle; set steer: true when it must reach them during their " +
+				"current task - it joins their run and is delivered at their next model call, " +
+				"ahead of anything queued. Steer for corrections or a question that blocks " +
+				"you, not for courtesy or background. The engine frames and logs the delivery, " +
 				"and the Quartermaster sees all traffic. A tracking number is echoed back to " +
 				"you and can be cited when the Quartermaster steers you. A reply, if there is one, arrives later as a message to you (there is nothing to poll), and only if " +
 				"the recipient has a mailbox back to you; the send result tells you. Your instructions " +
@@ -164,13 +187,20 @@ export function crewmanTools(memberName: string, recordPath: string, hooks: Crew
 			parameters: Type.Object({
 				mailbox: Type.String({ description: "The mailbox name from your channels list." }),
 				body: Type.String({ description: "The message body." }),
+				steer: Type.Optional(
+					Type.Boolean({
+						description:
+							"True: deliver during the recipient's current task, at its next model call (starts it if idle). " +
+							"False (default): wait until the recipient is idle.",
+					}),
+				),
 			}),
 			async execute(
 				_toolCallId: string,
-				params: { mailbox: string; body: string },
+				params: { mailbox: string; body: string; steer?: boolean },
 			) {
 				const { onSend } = hooks;
-				const result = onSend(params.mailbox, params.body);
+				const result = onSend(params.mailbox, params.body, params.steer);
 				if (typeof result === "string") {
 					return {
 						content: [{ type: "text", text: result }],
@@ -178,12 +208,19 @@ export function crewmanTools(memberName: string, recordPath: string, hooks: Crew
 						details: {},
 					};
 				}
+				const when: Record<string, string> = {
+					started: "it starts the recipient working now",
+					steered: "the recipient gets it at its next model call, ahead of anything queued",
+					held: "the recipient gets it as its run starts",
+					queued: "the recipient sees it when idle",
+					undeliverable: "it was not delivered (the recipient has no session)",
+				};
 				return {
 					content: [
 						{
 							type: "text",
 							text:
-								`Sent via ${params.mailbox} as ${result.id}: the recipient sees it when idle; the Quartermaster sees it always. ${result.id} can be cited to reference this message. ` +
+								`Sent via ${params.mailbox} as ${result.id}: ${when[result.delivery] ?? when.queued}; the Quartermaster sees it always. ${result.id} can be cited to reference this message. ` +
 								(result.replyChannel
 									? `They can answer on ${result.replyChannel}; the answer arrives later as a message to you. You cannot poll for it: carry on with other work, or report what you are waiting on.`
 									: "They have no mailbox back to you, so do not wait for a reply here; if you need an answer, say so in your report."),

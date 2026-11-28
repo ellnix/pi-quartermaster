@@ -344,7 +344,16 @@ anthropic/claude-opus-4-8:
   no report: it never ran, and the convene or add_member result already
   says so synchronously.
 - Clarification traffic flows through sanctioned mailboxes: prose
-  between agents, off the quartermaster's context bus.
+  between agents, off the quartermaster's context bus. A crewman's `send`
+  can also **steer**: with `steer: true` it joins the recipient's run the
+  same way the quartermaster's steer does (delivered at its next model
+  call, held while the run is prepared, starting a run if the member is
+  idle), while the default waits until the recipient is idle. A run window
+  takes at most three steering messages; further steers queue as
+  follow-ups. Across runs an exchange is still bounded only by the runs
+  themselves — each reply costs a run, as any follow-up would. The traffic
+  log marks which sends were steers, and the sender's receipt says what
+  the engine did (started a run, steered, held, or queued).
 
 **Wake mechanics** — implemented in `src/fleet/wake.ts`, all pi primitives:
 
@@ -386,7 +395,12 @@ anthropic/claude-opus-4-8:
 
 - Idle child + mailbox message → the extension (RPC client) queues a
   prompt; the child's loop runs; its reply routes into the target
-  mailbox. Busy child → queued, drained on idle.
+  mailbox. Busy child → a follow-up waits in the engine queue and is
+  drained on idle; a steer goes into the session's own steering queue and
+  is delivered at the run's next model call — usually the first, when the
+  steer is held while the run is prepared; an input hook can delay the
+  queueing by a turn — and an idle child's steer starts a run, so steering
+  never races a plain prompt into the SDK's "already processing" refusal.
 - Children die with the parent process. Logs persist in the session
   record; reconvening is a fresh draw with the record as the blackboard.
 

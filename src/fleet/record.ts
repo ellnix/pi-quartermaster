@@ -69,6 +69,8 @@ export interface ChannelEntry {
 	from: string;
 	to: string;
 	body: string;
+	/** True when the message was delivered as a steer into the run in flight. */
+	steer?: boolean;
 }
 
 /** Channel logs are named by config/paths.ts, beside the two watched files. */
